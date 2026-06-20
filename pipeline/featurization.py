@@ -1,4 +1,5 @@
 from rdkit.Chem import Descriptors
+import pandas as pd
 from rdkit.Chem import rdMolDescriptors
 from rdkit.Chem import AllChem, MACCSkeys
 from rdkit.Chem.AtomPairs import Pairs, Torsions
@@ -66,3 +67,43 @@ def compute_fingerprint(mol, fp_type="morgan", radius=2, n_bits=2048):
 
     except Exception as e:
         return None, f"Fingerprint computation failed: {str(e)}"
+
+
+
+
+def featurize_dataset(mol_list, fp_type="morgan", radius=2, n_bits=2048):
+    """
+    Compute descriptors and fingerprints for a list of molecules,
+    returning one combined DataFrame.
+
+    Parameters:
+        mol_list (list): list of RDKit Mol objects
+        fp_type (str): fingerprint type, passed to compute_fingerprint
+        radius (int): radius for morgan fingerprint
+        n_bits (int): fingerprint length
+
+    Returns:
+        tuple: (dataframe, errors)
+            dataframe (pandas DataFrame): one row per molecule, descriptor columns + fingerprint bit columns
+            errors (list): list of dicts for molecules that failed, with index and reason
+    """
+    rows = []
+    errors = []
+
+    for index, mol in enumerate(mol_list):
+        descriptors = compute_descriptors(mol)
+        fp_array, fp_error = compute_fingerprint(mol, fp_type=fp_type, radius=radius, n_bits=n_bits)
+
+        if fp_error:
+            errors.append({"index": index, "reason": fp_error})
+            continue
+
+        row = dict(descriptors)
+        for bit_index, bit_value in enumerate(fp_array):
+            row[f"{fp_type}_bit_{bit_index}"] = bit_value
+
+        rows.append(row)
+
+    dataframe = pd.DataFrame(rows)
+
+    return dataframe, errors
