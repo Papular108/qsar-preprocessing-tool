@@ -133,3 +133,36 @@ def check_pains(mol):
         return True, match.GetDescription()
 
     return False, None
+
+
+def deduplicate_molecules(mol_list):
+    """
+    Remove duplicate molecules from a list, based on canonical SMILES comparison.
+
+    Parameters:
+        mol_list (list): list of RDKit Mol objects
+
+    Returns:
+        tuple: (unique_mols, duplicate_info)
+            unique_mols (list): molecules with duplicates removed, keeping the first occurrence
+            duplicate_info (list): list of dicts describing each removed duplicate,
+                                    e.g. {"index": 5, "duplicate_of_index": 2, "smiles": "CCO"}
+    """
+    seen_smiles = {}
+    unique_mols = []
+    duplicate_info = []
+
+    for index, mol in enumerate(mol_list):
+        canonical = Chem.MolToSmiles(mol)
+
+        if canonical in seen_smiles:
+            duplicate_info.append({
+                "index": index,
+                "duplicate_of_index": seen_smiles[canonical],
+                "smiles": canonical,
+            })
+        else:
+            seen_smiles[canonical] = index
+            unique_mols.append(mol)
+
+    return unique_mols, duplicate_info
