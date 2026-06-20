@@ -4,6 +4,10 @@ from molvs import Standardizer
 standardizer = Standardizer()
 from rdkit.Chem.SaltRemover import SaltRemover
 salt_remover = SaltRemover()
+from rdkit.Chem import FilterCatalog
+pains_params = FilterCatalog.FilterCatalogParams()
+pains_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS)
+pains_catalog = FilterCatalog.FilterCatalog(pains_params)
 
 
 def parse_smiles(smiles):
@@ -109,3 +113,23 @@ def check_lipinski(mol, max_violations=1):
         reason = None
 
     return passes, descriptors, reason
+
+
+def check_pains(mol):
+    """
+    Check a molecule against the PAINS filter catalog.
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (is_pains, matched_name)
+            is_pains (bool): True if the molecule matches a PAINS pattern
+            matched_name (str or None): name of the matched PAINS pattern, or None if no match
+    """
+    match = pains_catalog.GetFirstMatch(mol)
+
+    if match is not None:
+        return True, match.GetDescription()
+
+    return False, None
