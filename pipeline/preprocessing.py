@@ -1,4 +1,6 @@
 from rdkit import Chem
+from molvs import Standardizer
+standardizer = Standardizer()
 
 
 def parse_smiles(smiles):
@@ -19,3 +21,22 @@ def parse_smiles(smiles):
         return None, f"Could not parse SMILES: '{smiles}'"
 
     return mol, None
+
+
+def standardize_molecule(mol):
+    """
+    Standardize an RDKit Mol object using MolVS.
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (standardized_mol, error_message)
+            standardized_mol is the cleaned Mol object if successful, otherwise None
+            error_message is None if successful, otherwise a string explaining what went wrong
+    """
+    try:
+        standardized_mol = standardizer.standardize(mol)
+        return standardized_mol, None
+    except Exception as e:
+        return None, f"Standardization failed: {str(e)}"
