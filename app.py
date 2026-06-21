@@ -1,5 +1,6 @@
 import streamlit as st
-from pipeline.preprocessing import parse_smiles
+import pandas as pd
+from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
 
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
@@ -16,3 +17,45 @@ if st.button("Parse"):
     else:
         st.success("Successfully parsed!")
         st.write(f"Number of atoms: {mol.GetNumAtoms()}")
+
+st.header("Batch preprocessing")
+st.write("Upload a file with one SMILES string per line, or paste them below.")
+
+uploaded_file = st.file_uploader("Upload a .txt or .csv file with SMILES (one per line)", type=["txt", "csv"])
+pasted_smiles = st.text_area("Or paste SMILES here (one per line)")
+
+max_violations = st.slider("Max Lipinski violations allowed", min_value=0, max_value=4, value=1)
+
+if st.button("Run Pipeline"):
+    smiles_list = []
+
+    if uploaded_file is not None:
+        content = uploaded_file.read().decode("utf-8")
+        smiles_list = [line.strip() for line in content.splitlines() if line.strip()]
+    elif pasted_smiles.strip():
+        smiles_list = [line.strip() for line in pasted_smiles.splitlines() if line.strip()]
+
+    if not smiles_list:
+        st.warning("Please upload a file or paste at least one SMILES string.")
+    else:
+        result = run_preprocessing_pipeline(smiles_list, lipinski_max_violations=max_violations)
+
+        st.subheader("Results")
+        st.write(f"Input molecules: {len(smiles_list)}")
+        st.write(f"Kept after preprocessing: {len(result['kept_smiles'])}")
+
+        st.subheader("Audit Trail")
+        audit_df = pd.DataFrame(result["audit_trail"])
+        st.dataframe(audit_df)
+
+        if result["removed_log"]:
+            st.subheader("Removed Molecules (with reasons)")
+            removed_df = pd.DataFrame(result["removed_log"])
+            st.dataframe(removed_df)
+
+        st.subheader("Kept Molecules (SMILES)")
+        kept_df = pd.DataFrame({"SMILES": result["kept_smiles"]})
+        st.dataframe(kept_df)
+
+        csv_data = kept_df.to_csv(index=False)
+        st.download_button("Download kept molecules as CSV", data=csv_data, file_name="kept_molecules.csv", mime="text/csv")
