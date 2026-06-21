@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
+from pipeline.featurization import featurize_dataset
 
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
@@ -39,6 +40,7 @@ if st.button("Run Pipeline"):
         st.warning("Please upload a file or paste at least one SMILES string.")
     else:
         result = run_preprocessing_pipeline(smiles_list, lipinski_max_violations=max_violations)
+        st.session_state["kept_mols_for_featurization"] = result["kept_mols"]
 
         st.subheader("Results")
         st.write(f"Input molecules: {len(smiles_list)}")
@@ -59,3 +61,49 @@ if st.button("Run Pipeline"):
 
         csv_data = kept_df.to_csv(index=False)
         st.download_button("Download kept molecules as CSV", data=csv_data, file_name="kept_molecules.csv", mime="text/csv")
+
+
+st.header("Featurization")
+st.write("After preprocessing, generate descriptors and fingerprints for your kept molecules.")
+
+fp_type = st.selectbox(
+    "Fingerprint type",
+    ["morgan", "maccs", "topological", "atom_pair", "torsion", "avalon"],
+)
+if fp_type == "maccs":
+    st.caption("MACCS keys are a fixed, predefined set of 166 structural patterns — bit size is not adjustable.")
+    n_bits = 167
+else:
+    n_bits = st.selectbox("Fingerprint size (bits)", [512, 1024, 2048], index=2)
+
+if fp_type == "morgan":
+    radius = st.slider("Morgan radius", min_value=1, max_value=4, value=2)
+else:
+    radius = 2
+
+if st.button("Run Featurization"):
+    if "kept_mols_for_featurization" not in st.session_state:
+        st.warning("Please run the preprocessing pipeline first, above.")
+    else:
+        feature_df, feat_errors = featurize_dataset(
+            st.session_state["kept_mols_for_featurization"],
+            fp_type=fp_type,
+            radius=radius,
+            n_bits=n_bits,
+        )
+
+        st.subheader("Featurized Data")
+        st.write(f"Shape: {feature_df.shape}")
+        st.dataframe(feature_df.head(20))
+
+        if feat_errors:
+            st.warning(f"{len(feat_errors)} molecules failed featurization.")
+            st.dataframe(pd.DataFrame(feat_errors))
+
+        csv_data = feature_df.to_csv(index=False)
+        st.download_button(
+            "Download featurized data as CSV",
+            data=csv_data,
+            file_name="featurized_data.csv",
+            mime="text/csv",
+        )
