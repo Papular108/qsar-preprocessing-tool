@@ -1,4 +1,8 @@
 from rdkit import Chem
+import sys
+from rdkit.Chem import RDConfig
+sys.path.append(RDConfig.RDContribDir + "/SA_Score")
+import sascorer
 from rdkit.Chem import Descriptors
 from molvs import Standardizer
 standardizer = Standardizer()
@@ -482,3 +486,22 @@ def check_brenk(mol):
         return True, match.GetDescription()
 
     return False, None
+
+
+def compute_synthetic_accessibility(mol):
+    """
+    Compute the Synthetic Accessibility (SA) score for a molecule.
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (sa_score, error_message)
+            sa_score (float): 1 = easy to synthesize, 10 = very difficult
+            error_message (str or None)
+    """
+    try:
+        score = sascorer.calculateScore(mol)
+        return score, None
+    except Exception as e:
+        return None, f"SA score computation failed: {str(e)}"
