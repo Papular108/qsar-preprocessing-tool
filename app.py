@@ -37,7 +37,7 @@ if st.button("Parse"):
 st.header("Batch preprocessing")
 st.write("Upload a file with one SMILES string per line, or paste them below.")
 
-uploaded_file = st.file_uploader("Upload a .txt or .csv file with SMILES (one per line)", type=["txt", "csv"])
+uploaded_file = st.file_uploader("Upload a .txt or .csv file with SMILES (one per line)", type=["txt", "csv", "xlsx"])
 pasted_smiles = st.text_area("Or paste SMILES here (one per line)")
 
 max_violations = st.number_input(
@@ -64,8 +64,12 @@ with col3:
 if st.button("Run Pipeline"):
     smiles_list = []
     if uploaded_file is not None:
-        if uploaded_file.name.endswith(".csv"):
-            uploaded_df = pd.read_csv(uploaded_file)
+        file_name = uploaded_file.name.lower()
+        if file_name.endswith(".csv") or file_name.endswith(".xlsx"):
+            if file_name.endswith(".csv"):
+                uploaded_df = pd.read_csv(uploaded_file)
+            else:
+                uploaded_df = pd.read_excel(uploaded_file)
             smiles_column = None
             for candidate in ["canonical_smiles", "Smiles", "SMILES", "smiles"]:
                 if candidate in uploaded_df.columns:
