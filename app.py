@@ -38,6 +38,18 @@ max_violations = st.number_input(
     help="Lipinski's Rule of Five flags molecules unlikely to be orally bioavailable. The standard threshold is 1 violation; higher values are more permissive and may include less drug-like compounds.",
 )
 
+st.write("Optional additional filters:")
+col1, col2, col3 = st.columns(3)
+with col1:
+    enable_veber = st.checkbox("Veber", help="Rotatable bonds <=10 and TPSA <=140")
+    enable_ghose = st.checkbox("Ghose", help="Drug-like property ranges (MW, LogP, molar refractivity, atom count)")
+with col2:
+    enable_egan = st.checkbox("Egan", help="LogP and TPSA within the Egan egg boundary")
+    enable_muegge = st.checkbox("Muegge", help="Combined pharmacophore-like property rule")
+with col3:
+    enable_brenk = st.checkbox("Brenk", help="Flags additional structural alerts beyond PAINS")
+    enable_sa_score = st.checkbox("SA Score", help="Report synthetic accessibility score (1=easy, 10=hard) for kept molecules. Informational only, does not filter.")
+
 if st.button("Run Pipeline"):
     smiles_list = []
 
@@ -50,7 +62,16 @@ if st.button("Run Pipeline"):
     if not smiles_list:
         st.warning("Please upload a file or paste at least one SMILES string.")
     else:
-        result = run_preprocessing_pipeline(smiles_list, lipinski_max_violations=max_violations)
+        result = run_preprocessing_pipeline(
+            smiles_list,
+            lipinski_max_violations=max_violations,
+            enable_veber=enable_veber,
+            enable_ghose=enable_ghose,
+            enable_egan=enable_egan,
+            enable_muegge=enable_muegge,
+            enable_brenk=enable_brenk,
+            enable_sa_score=enable_sa_score,
+        )
         st.session_state["kept_mols_for_featurization"] = result["kept_mols"]
 
         st.subheader("Results")
@@ -67,7 +88,10 @@ if st.button("Run Pipeline"):
             st.dataframe(removed_df)
 
         st.subheader("Kept Molecules (SMILES)")
-        kept_df = pd.DataFrame({"SMILES": result["kept_smiles"]})
+        kept_data = {"SMILES": result["kept_smiles"]}
+        if result["sa_scores"] is not None:
+            kept_data["SA_Score"] = result["sa_scores"]
+        kept_df = pd.DataFrame(kept_data)
         st.dataframe(kept_df)
 
         csv_data = kept_df.to_csv(index=False)
