@@ -342,3 +342,122 @@ def run_preprocessing_pipeline(smiles_list, lipinski_max_violations=1):
         "audit_trail": audit_trail,
         "removed_log": removed_log,
     }
+
+
+def check_veber(mol):
+    """
+    Check a molecule against Veber's rules (oral bioavailability).
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (passes, descriptors, reason)
+    """
+    rotatable_bonds = Descriptors.NumRotatableBonds(mol)
+    tpsa = Descriptors.TPSA(mol)
+
+    passes = rotatable_bonds <= 10 and tpsa <= 140
+
+    descriptors = {"RotatableBonds": rotatable_bonds, "TPSA": tpsa}
+
+    reason = None
+    if not passes:
+        reason = f"Veber violation (RotatableBonds={rotatable_bonds}, TPSA={tpsa:.1f})"
+
+    return passes, descriptors, reason
+
+
+def check_ghose(mol):
+    """
+    Check a molecule against Ghose filter (drug-like property ranges).
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (passes, descriptors, reason)
+    """
+    mw = Descriptors.MolWt(mol)
+    logp = Descriptors.MolLogP(mol)
+    mr = Descriptors.MolMR(mol)
+    atom_count = mol.GetNumAtoms()
+
+    passes = (
+        160 <= mw <= 480
+        and -0.4 <= logp <= 5.6
+        and 40 <= mr <= 130
+        and 20 <= atom_count <= 70
+    )
+
+    descriptors = {"MW": mw, "LogP": logp, "MolarRefractivity": mr, "AtomCount": atom_count}
+
+    reason = None
+    if not passes:
+        reason = f"Ghose violation (MW={mw:.1f}, LogP={logp:.2f}, MR={mr:.1f}, Atoms={atom_count})"
+
+    return passes, descriptors, reason
+
+
+def check_egan(mol):
+    """
+    Check a molecule against Egan's egg boundary (LogP vs TPSA).
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (passes, descriptors, reason)
+    """
+    logp = Descriptors.MolLogP(mol)
+    tpsa = Descriptors.TPSA(mol)
+
+    passes = -1 <= logp <= 5.88 and tpsa <= 131.6
+
+    descriptors = {"LogP": logp, "TPSA": tpsa}
+
+    reason = None
+    if not passes:
+        reason = f"Egan violation (LogP={logp:.2f}, TPSA={tpsa:.1f})"
+
+    return passes, descriptors, reason
+
+
+def check_muegge(mol):
+    """
+    Check a molecule against Muegge's pharmacophore-like rules.
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (passes, descriptors, reason)
+    """
+    mw = Descriptors.MolWt(mol)
+    logp = Descriptors.MolLogP(mol)
+    tpsa = Descriptors.TPSA(mol)
+    rings = Descriptors.RingCount(mol)
+    hbd = Descriptors.NumHDonors(mol)
+    hba = Descriptors.NumHAcceptors(mol)
+    rotatable_bonds = Descriptors.NumRotatableBonds(mol)
+
+    passes = (
+        200 <= mw <= 600
+        and -2 <= logp <= 5
+        and tpsa <= 150
+        and rings <= 7
+        and hbd <= 5
+        and hba <= 10
+        and rotatable_bonds <= 15
+    )
+
+    descriptors = {
+        "MW": mw, "LogP": logp, "TPSA": tpsa, "Rings": rings,
+        "HBD": hbd, "HBA": hba, "RotatableBonds": rotatable_bonds,
+    }
+
+    reason = None
+    if not passes:
+        reason = f"Muegge violation (MW={mw:.1f}, LogP={logp:.2f}, TPSA={tpsa:.1f}, Rings={rings})"
+
+    return passes, descriptors, reason
