@@ -8,6 +8,9 @@ from rdkit.Chem import FilterCatalog
 pains_params = FilterCatalog.FilterCatalogParams()
 pains_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS)
 pains_catalog = FilterCatalog.FilterCatalog(pains_params)
+brenk_params = FilterCatalog.FilterCatalogParams()
+brenk_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.BRENK)
+brenk_catalog = FilterCatalog.FilterCatalog(brenk_params)
 
 
 def parse_smiles(smiles):
@@ -461,3 +464,21 @@ def check_muegge(mol):
         reason = f"Muegge violation (MW={mw:.1f}, LogP={logp:.2f}, TPSA={tpsa:.1f}, Rings={rings})"
 
     return passes, descriptors, reason
+
+
+def check_brenk(mol):
+    """
+    Check a molecule against the Brenk filter catalog (structural alerts for unwanted groups).
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (is_brenk_hit, matched_name)
+    """
+    match = brenk_catalog.GetFirstMatch(mol)
+
+    if match is not None:
+        return True, match.GetDescription()
+
+    return False, None
