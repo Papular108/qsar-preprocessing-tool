@@ -98,7 +98,8 @@ def featurize_dataset(mol_list, fp_type="morgan", radius=2, n_bits=2048):
             errors.append({"index": index, "reason": fp_error})
             continue
 
-        row = dict(descriptors)
+        row = {"SMILES": Chem.MolToSmiles(mol)}
+        row.update(descriptors)
         for bit_index, bit_value in enumerate(fp_array):
             row[f"{fp_type}_bit_{bit_index}"] = bit_value
 
