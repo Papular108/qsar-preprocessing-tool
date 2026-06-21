@@ -1,7 +1,18 @@
 import streamlit as st
 import pandas as pd
+from datetime import datetime
+from rdkit import rdBase
 from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
 from pipeline.featurization import featurize_dataset
+
+def build_metadata_block(settings):
+    lines = ['# === Reproducibility Metadata ===']
+    lines.append(f'# Generated: {datetime.now().isoformat()}')
+    lines.append(f'# RDKit version: {rdBase.rdkitVersion}')
+    for key, value in settings.items():
+        lines.append(f'# {key}: {value}')
+    lines.append('# ================================')
+    return chr(10).join(lines) + chr(10)
 
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
@@ -52,10 +63,21 @@ with col3:
 
 if st.button("Run Pipeline"):
     smiles_list = []
-
     if uploaded_file is not None:
-        content = uploaded_file.read().decode("utf-8")
-        smiles_list = [line.strip() for line in content.splitlines() if line.strip()]
+        if uploaded_file.name.endswith(".csv"):
+            uploaded_df = pd.read_csv(uploaded_file)
+            smiles_column = None
+            for candidate in ["canonical_smiles", "Smiles", "SMILES", "smiles"]:
+                if candidate in uploaded_df.columns:
+                    smiles_column = candidate
+                    break
+            if smiles_column is None:
+                st.warning("Could not auto-detect a SMILES column. Please select it manually below.")
+                smiles_column = st.selectbox("Which column contains the SMILES strings?", uploaded_df.columns.tolist())
+            smiles_list = uploaded_df[smiles_column].dropna().astype(str).tolist()
+        else:
+            file_content = uploaded_file.read().decode("utf-8")
+            smiles_list = [line.strip() for line in file_content.splitlines() if line.strip()]
     elif pasted_smiles.strip():
         smiles_list = [line.strip() for line in pasted_smiles.splitlines() if line.strip()]
 
@@ -94,7 +116,18 @@ if st.button("Run Pipeline"):
         kept_df = pd.DataFrame(kept_data)
         st.dataframe(kept_df)
 
-        csv_data = kept_df.to_csv(index=False)
+        metadata = build_metadata_block({
+            "Lipinski max violations": max_violations,
+            "Veber filter": enable_veber,
+            "Ghose filter": enable_ghose,
+            "Egan filter": enable_egan,
+            "Muegge filter": enable_muegge,
+            "Brenk filter": enable_brenk,
+            "SA score reported": enable_sa_score,
+            "Input molecule count": len(smiles_list),
+            "Kept molecule count": len(result["kept_smiles"]),
+        })
+        csv_data = metadata + kept_df.to_csv(index=False)
         st.download_button("Download kept molecules as CSV", data=csv_data, file_name="kept_molecules.csv", mime="text/csv")
 
 
@@ -148,7 +181,14 @@ if st.button("Run Featurization"):
             st.warning(f"{len(feat_errors)} molecules failed featurization.")
             st.dataframe(pd.DataFrame(feat_errors))
 
-        csv_data = feature_df.to_csv(index=False)
+        feat_metadata = build_metadata_block({
+            "Fingerprint type": fp_type,
+            "Fingerprint bits": n_bits,
+            "Morgan radius": radius,
+            "Molecule count": feature_df.shape[0],
+            "Feature column count": feature_df.shape[1],
+        })
+        csv_data = feat_metadata + feature_df.to_csv(index=False)
         st.download_button(
             "Download featurized data as CSV",
             data=csv_data,
