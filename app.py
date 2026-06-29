@@ -1,9 +1,41 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime
-from rdkit import rdBase
+from rdkit import rdBase, Chem
 from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
 from pipeline.featurization import featurize_dataset
+from pipeline.visualization import mol_to_base64_png
+from pipeline.methodology import generate_methods_text
+
+def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
+    """Render a list of dicts as an HTML table with an embedded structure image column."""
+    header_cells = "".join(f"<th style='padding:6px 10px;text-align:left;border-bottom:1px solid #ddd'>{k}</th>" for k in [smiles_key] + extra_keys)
+    header_cells += "<th style='padding:6px 10px;text-align:left;border-bottom:1px solid #ddd'>Structure</th>"
+
+    html_rows = []
+    for row in rows:
+        cells = "".join(
+            f"<td style='padding:6px 10px;vertical-align:middle'>{row.get(k, '')}</td>"
+            for k in [smiles_key] + extra_keys
+        )
+        mol = Chem.MolFromSmiles(str(row.get(smiles_key, "")))
+        if mol:
+            b64 = mol_to_base64_png(mol, size=img_size)
+            img_tag = f'<img src="data:image/png;base64,{b64}" style="display:block" />'
+        else:
+            img_tag = "<em>invalid SMILES</em>"
+        cells += f"<td style='padding:4px 10px;vertical-align:middle'>{img_tag}</td>"
+        html_rows.append(f"<tr style='border-bottom:1px solid #eee'>{cells}</tr>")
+
+    body = "".join(html_rows)
+    return (
+        f"<div style='overflow-x:auto'>"
+        f"<table style='border-collapse:collapse;width:100%'>"
+        f"<thead><tr style='background:#f5f5f5'>{header_cells}</tr></thead>"
+        f"<tbody>{body}</tbody>"
+        f"</table></div>"
+    )
+
 
 def build_metadata_block(settings):
     lines = ['# === Reproducibility Metadata ===']
@@ -99,6 +131,17 @@ if st.button("Run Pipeline"):
             enable_sa_score=enable_sa_score,
         )
         st.session_state["kept_mols_for_featurization"] = result["kept_mols"]
+        st.session_state["pipeline_settings"] = {
+            "lipinski_max_violations": max_violations,
+            "enable_veber": enable_veber,
+            "enable_ghose": enable_ghose,
+            "enable_egan": enable_egan,
+            "enable_muegge": enable_muegge,
+            "enable_brenk": enable_brenk,
+            "enable_sa_score": enable_sa_score,
+            "input_count": len(smiles_list),
+            "kept_count": len(result["kept_smiles"]),
+        }
 
         st.subheader("Results")
         st.write(f"Input molecules: {len(smiles_list)}")
@@ -110,15 +153,21 @@ if st.button("Run Pipeline"):
 
         if result["removed_log"]:
             st.subheader("Removed Molecules (with reasons)")
-            removed_df = pd.DataFrame(result["removed_log"])
-            st.dataframe(removed_df)
+            st.markdown(
+                _mol_table_html(result["removed_log"], "smiles", ["original_index", "step", "reason"]),
+                unsafe_allow_html=True,
+            )
 
         st.subheader("Kept Molecules (SMILES)")
         kept_data = {"SMILES": result["kept_smiles"]}
         if result["sa_scores"] is not None:
             kept_data["SA_Score"] = result["sa_scores"]
         kept_df = pd.DataFrame(kept_data)
-        st.dataframe(kept_df)
+        extra_kept = ["SA_Score"] if result["sa_scores"] is not None else []
+        st.markdown(
+            _mol_table_html(kept_df.to_dict("records"), "SMILES", extra_kept),
+            unsafe_allow_html=True,
+        )
 
         metadata = build_metadata_block({
             "Lipinski max violations": max_violations,
@@ -199,3 +248,22 @@ if st.button("Run Featurization"):
             file_name="featurized_data.csv",
             mime="text/csv",
         )
+
+st.header("Generate Methods Section")
+st.write("Generate a publication-ready paragraph describing the preprocessing and featurization steps you used.")
+
+if st.button("Generate Methods Section"):
+    if "pipeline_settings" not in st.session_state:
+        st.warning("Please run the preprocessing pipeline first.")
+    else:
+        settings = dict(st.session_state["pipeline_settings"])
+        settings["fp_type"] = fp_type
+        settings["n_bits"] = n_bits
+        settings["radius"] = radius
+        methods_text = generate_methods_text(settings)
+        st.text_area(
+            "Methods paragraph (select all and copy)",
+            value=methods_text,
+            height=250,
+        )
+        st.caption("Tip: click inside the text box, then press Ctrl+A / Cmd+A to select all.")
