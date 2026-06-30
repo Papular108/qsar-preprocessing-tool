@@ -367,6 +367,73 @@ def compute_synthetic_accessibility(mol):
         return None, f"SA score computation failed: {str(e)}"
 
 
+def label_activity(
+    df,
+    activity_column,
+    activity_type="IC50",
+    threshold_active=1000,
+    threshold_inactive=10000,
+    use_intermediate=False,
+):
+    """
+    Convert continuous bioactivity values (nM) into categorical labels for ML classification.
+
+    Parameters:
+        df (pd.DataFrame): input DataFrame with an activity column in nanomolar units
+        activity_column (str): column name containing activity values
+        activity_type (str): label for the measurement type (e.g. "IC50", "Ki")
+        threshold_active (float): nM threshold; values <= this are "Active"
+        threshold_inactive (float): nM threshold for three-class mode; values > this are "Inactive"
+        use_intermediate (bool): when True, adds an "Intermediate" class between the two thresholds
+
+    Returns:
+        tuple: (labeled_df, skipped)
+            labeled_df (pd.DataFrame): copy of df with new columns "Activity_Label" and "pActivity"
+            skipped (list of dicts): rows skipped due to missing, zero, or negative values
+    """
+    import math
+
+    df = df.copy()
+    labels = []
+    p_values = []
+    skipped = []
+
+    for idx, val in df[activity_column].items():
+        # Missing values
+        if val != val or val is None:  # NaN check without importing pandas
+            labels.append(None)
+            p_values.append(None)
+            skipped.append({"index": idx, "value": val, "reason": "missing value"})
+            continue
+        try:
+            fval = float(val)
+        except (ValueError, TypeError):
+            labels.append(None)
+            p_values.append(None)
+            skipped.append({"index": idx, "value": val, "reason": "non-numeric value"})
+            continue
+        if fval <= 0:
+            labels.append(None)
+            p_values.append(None)
+            skipped.append({"index": idx, "value": fval, "reason": "non-positive value (cannot compute log)"})
+            continue
+
+        # pActivity = -log10(value in M) = -log10(value_nM × 1e-9) = 9 - log10(value_nM)
+        p_val = round(9.0 - math.log10(fval), 3)
+        p_values.append(p_val)
+
+        if fval <= threshold_active:
+            labels.append("Active")
+        elif use_intermediate and fval <= threshold_inactive:
+            labels.append("Intermediate")
+        else:
+            labels.append("Inactive")
+
+    df["Activity_Label"] = labels
+    df["pActivity"] = p_values
+    return df, skipped
+
+
 def run_preprocessing_pipeline(
     smiles_list,
     lipinski_max_violations=1,

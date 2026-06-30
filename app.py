@@ -5,7 +5,7 @@ st.set_page_config(page_title="QSAR Preprocessing Tool", page_icon="🧪", layou
 import pandas as pd
 from datetime import datetime
 from rdkit import rdBase, Chem
-from pipeline.preprocessing import run_preprocessing_pipeline
+from pipeline.preprocessing import run_preprocessing_pipeline, label_activity
 from pipeline.featurization import featurize_dataset, compute_descriptors
 import altair as alt
 from pipeline.visualization import mol_to_base64_png
@@ -149,6 +149,136 @@ with st.expander("Try with example data", expanded=False):
 uploaded_file = st.file_uploader("Upload a .txt, .csv, or .xlsx file with SMILES", type=["txt", "csv", "xlsx"])
 pasted_smiles = st.text_area("Or paste SMILES here (one per line)", key="pasted_smiles")
 
+# ── Early parse of uploaded CSV/XLSX for column detection ────────────────────
+_uploaded_df = None
+_uploaded_smiles_col = None
+if uploaded_file is not None:
+    _fname = uploaded_file.name.lower()
+    if _fname.endswith(".csv"):
+        _uploaded_df = pd.read_csv(uploaded_file)
+    elif _fname.endswith(".xlsx"):
+        _uploaded_df = pd.read_excel(uploaded_file)
+    if _uploaded_df is not None:
+        for _c in ["canonical_smiles", "Smiles", "SMILES", "smiles"]:
+            if _c in _uploaded_df.columns:
+                _uploaded_smiles_col = _c
+                break
+        if _uploaded_smiles_col is None:
+            st.warning("Could not auto-detect a SMILES column. Please select it manually.")
+            _uploaded_smiles_col = st.selectbox(
+                "Which column contains the SMILES strings?",
+                _uploaded_df.columns.tolist(),
+                key="smiles_col_early",
+            )
+
+# ── Activity Labeling (CSV/XLSX only) ────────────────────────────────────────
+_activity_label_map = {}
+_activity_pval_map = {}
+
+if _uploaded_df is not None:
+    with st.expander("Activity Labeling (optional)", expanded=False):
+        st.write(
+            "Assign Active / Inactive labels from a bioactivity column in your file. "
+            "Values must be in **nanomolar (nM)**."
+        )
+        _numeric_cols = [
+            c for c in _uploaded_df.select_dtypes(include="number").columns
+            if c != _uploaded_smiles_col
+        ]
+        if not _numeric_cols:
+            st.info("No numeric columns found in the uploaded file for activity labeling.")
+        else:
+            _act_keywords = ["ic50", "ki", "ec50", "kd", "activity", "potency"]
+            _auto_act_col = next(
+                (c for c in _numeric_cols if any(kw in c.lower() for kw in _act_keywords)),
+                None,
+            )
+            _act_default_idx = _numeric_cols.index(_auto_act_col) if _auto_act_col else 0
+
+            _la_c1, _la_c2 = st.columns(2)
+            with _la_c1:
+                _act_col = st.selectbox("Activity column", _numeric_cols, index=_act_default_idx)
+                _act_type = st.selectbox(
+                    "Activity type", ["IC50", "Ki", "EC50", "Kd"],
+                    help="Select the measurement type (values assumed to be in nM).",
+                )
+            with _la_c2:
+                _thr_active = st.number_input(
+                    "Active threshold (nM)", value=1000, min_value=1,
+                    help="Molecules with activity ≤ this value are labeled 'Active'.",
+                )
+                _use_3class = st.checkbox(
+                    "Use three-class labeling (Active / Intermediate / Inactive)",
+                    help="Molecules between the two thresholds are labeled 'Intermediate'.",
+                )
+                _thr_inactive = 10000
+                if _use_3class:
+                    _thr_inactive = st.number_input(
+                        "Inactive threshold (nM)", value=10000, min_value=1,
+                        help="Molecules above this value are labeled 'Inactive'.",
+                    )
+
+            _labeled_df, _skipped = label_activity(
+                _uploaded_df, _act_col, _act_type, _thr_active, _thr_inactive, _use_3class
+            )
+
+            # Build canonical SMILES → label map for downstream use
+            if _uploaded_smiles_col:
+                for _, _row in _labeled_df.iterrows():
+                    if _row["Activity_Label"] is None:
+                        continue
+                    _mol_tmp = Chem.MolFromSmiles(str(_row[_uploaded_smiles_col]))
+                    if _mol_tmp:
+                        _csmi = Chem.MolToSmiles(_mol_tmp)
+                        _activity_label_map[_csmi] = _row["Activity_Label"]
+                        _activity_pval_map[_csmi] = _row["pActivity"]
+
+            # Summary
+            _label_counts = (
+                _labeled_df["Activity_Label"].dropna().value_counts().reset_index()
+            )
+            _label_counts.columns = ["Label", "Count"]
+            _summary_parts = [
+                f"**{r['Count']} {r['Label']}**" for _, r in _label_counts.iterrows()
+            ]
+            st.write(
+                ", ".join(_summary_parts)
+                + (f" — {len(_skipped)} skipped (missing / zero / non-numeric)" if _skipped else "")
+            )
+
+            if not _label_counts.empty:
+                _bar = (
+                    alt.Chart(_label_counts)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("Label:N", title=None,
+                                sort=["Active", "Intermediate", "Inactive"]),
+                        y=alt.Y("Count:Q", title="Molecules"),
+                        color=alt.Color(
+                            "Label:N",
+                            scale=alt.Scale(
+                                domain=["Active", "Intermediate", "Inactive"],
+                                range=["#2ca02c", "#ff7f0e", "#d62728"],
+                            ),
+                            legend=None,
+                        ),
+                        tooltip=["Label:N", "Count:Q"],
+                    )
+                    .properties(height=180)
+                )
+                st.altair_chart(_bar, use_container_width=True)
+
+                _total = _label_counts["Count"].sum()
+                if (_label_counts["Count"] / _total < 0.1).any():
+                    st.warning(
+                        "Class imbalance detected — consider balancing techniques "
+                        "(e.g. oversampling, SMOTE, or class weights) before ML training."
+                    )
+
+            if _skipped:
+                with st.expander(f"View {len(_skipped)} skipped rows"):
+                    st.dataframe(pd.DataFrame(_skipped))
+
 max_violations = st.number_input(
     "Max Lipinski violations allowed",
     min_value=0,
@@ -173,25 +303,11 @@ with col3:
 
 if st.button("Run Pipeline"):
     smiles_list = []
-    if uploaded_file is not None:
-        file_name = uploaded_file.name.lower()
-        if file_name.endswith(".csv") or file_name.endswith(".xlsx"):
-            if file_name.endswith(".csv"):
-                uploaded_df = pd.read_csv(uploaded_file)
-            else:
-                uploaded_df = pd.read_excel(uploaded_file)
-            smiles_column = None
-            for candidate in ["canonical_smiles", "Smiles", "SMILES", "smiles"]:
-                if candidate in uploaded_df.columns:
-                    smiles_column = candidate
-                    break
-            if smiles_column is None:
-                st.warning("Could not auto-detect a SMILES column. Please select it manually below.")
-                smiles_column = st.selectbox("Which column contains the SMILES strings?", uploaded_df.columns.tolist())
-            smiles_list = uploaded_df[smiles_column].dropna().astype(str).tolist()
-        else:
-            file_content = uploaded_file.read().decode("utf-8")
-            smiles_list = [line.strip() for line in file_content.splitlines() if line.strip()]
+    if _uploaded_df is not None:
+        smiles_list = _uploaded_df[_uploaded_smiles_col].dropna().astype(str).tolist()
+    elif uploaded_file is not None:
+        file_content = uploaded_file.read().decode("utf-8")
+        smiles_list = [line.strip() for line in file_content.splitlines() if line.strip()]
     elif pasted_smiles.strip():
         smiles_list = [line.strip() for line in pasted_smiles.splitlines() if line.strip()]
 
@@ -253,8 +369,11 @@ if st.button("Run Pipeline"):
             kept_data["SA_Score"] = result["sa_scores"]
         if result["qed_scores"] is not None:
             kept_data["QED_Score"] = result["qed_scores"]
+        if _activity_label_map:
+            kept_data["Activity_Label"] = [_activity_label_map.get(s) for s in result["kept_smiles"]]
+            kept_data["pActivity"] = [_activity_pval_map.get(s) for s in result["kept_smiles"]]
         kept_df = pd.DataFrame(kept_data)
-        extra_kept = [c for c in ["SA_Score", "QED_Score"] if c in kept_df.columns]
+        extra_kept = [c for c in ["SA_Score", "QED_Score", "Activity_Label", "pActivity"] if c in kept_df.columns]
 
         metadata = build_metadata_block({
             "Lipinski max violations": max_violations,
