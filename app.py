@@ -1,8 +1,11 @@
 import streamlit as st
+
+st.set_page_config(page_title="QSAR Preprocessing Tool", page_icon="🧪", layout="wide")
+
 import pandas as pd
 from datetime import datetime
 from rdkit import rdBase, Chem
-from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
+from pipeline.preprocessing import run_preprocessing_pipeline
 from pipeline.featurization import featurize_dataset, compute_descriptors
 import altair as alt
 from pipeline.visualization import mol_to_base64_png
@@ -108,23 +111,6 @@ def build_metadata_block(settings):
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
-st.header("Try it: parse a SMILES string")
-
-smiles_input = st.text_input(
-    "Enter a SMILES string",
-    value="CCO",
-    help="SMILES (Simplified Molecular Input Line Entry System) is a text notation for chemical structures, e.g. CCO represents ethanol.",
-)
-
-if st.button("Parse"):
-    mol, error = parse_smiles(smiles_input)
-
-    if error:
-        st.error(error)
-    else:
-        st.success("Successfully parsed!")
-        st.write(f"Number of atoms: {mol.GetNumAtoms()}")
-
 st.header("Batch preprocessing")
 st.write("Upload a file with one SMILES string per line, or paste them below.")
 
@@ -147,7 +133,7 @@ with st.expander("Try with example data", expanded=False):
         st.session_state["pasted_smiles"] = "\n".join(smiles_list_ex)
         st.rerun()
 
-uploaded_file = st.file_uploader("Upload a .txt or .csv file with SMILES (one per line)", type=["txt", "csv", "xlsx"])
+uploaded_file = st.file_uploader("Upload a .txt, .csv, or .xlsx file with SMILES", type=["txt", "csv", "xlsx"])
 pasted_smiles = st.text_area("Or paste SMILES here (one per line)", key="pasted_smiles")
 
 max_violations = st.number_input(
@@ -199,17 +185,19 @@ if st.button("Run Pipeline"):
     if not smiles_list:
         st.warning("Please upload a file or paste at least one SMILES string.")
     else:
-        result = run_preprocessing_pipeline(
-            smiles_list,
-            lipinski_max_violations=max_violations,
-            enable_veber=enable_veber,
-            enable_ghose=enable_ghose,
-            enable_egan=enable_egan,
-            enable_muegge=enable_muegge,
-            enable_brenk=enable_brenk,
-            enable_sa_score=enable_sa_score,
-            enable_qed=enable_qed,
-        )
+        with st.spinner("Processing molecules..."):
+            result = run_preprocessing_pipeline(
+                smiles_list,
+                lipinski_max_violations=max_violations,
+                enable_veber=enable_veber,
+                enable_ghose=enable_ghose,
+                enable_egan=enable_egan,
+                enable_muegge=enable_muegge,
+                enable_brenk=enable_brenk,
+                enable_sa_score=enable_sa_score,
+                enable_qed=enable_qed,
+            )
+        _ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.session_state["kept_mols_for_featurization"] = result["kept_mols"]
         st.session_state["kept_smiles_for_featurization"] = result["kept_smiles"]
         st.session_state["pipeline_settings"] = {
@@ -240,7 +228,7 @@ if st.button("Run Pipeline"):
             st.download_button(
                 "Download removed molecules as CSV",
                 data=removed_df.to_csv(index=False),
-                file_name="removed_molecules.csv",
+                file_name=f"removed_molecules_{_ts}.csv",
                 mime="text/csv",
             )
             with st.expander("View removed molecules"):
@@ -270,7 +258,7 @@ if st.button("Run Pipeline"):
         csv_data = metadata + kept_df.to_csv(index=False)
 
         st.write(f"{len(kept_df)} molecules kept after preprocessing")
-        st.download_button("Download kept molecules as CSV", data=csv_data, file_name="kept_molecules.csv", mime="text/csv")
+        st.download_button("Download kept molecules as CSV", data=csv_data, file_name=f"kept_molecules_{_ts}.csv", mime="text/csv")
         with st.expander("View kept molecules (first 20)"):
             preview_records = kept_df.head(20).to_dict("records")
             st.markdown(
@@ -361,6 +349,8 @@ if st.button("Run Pipeline"):
             )
 
 
+st.divider()
+
 st.header("Featurization")
 st.write("After preprocessing, generate descriptors and fingerprints for your kept molecules.")
 
@@ -396,12 +386,14 @@ if st.button("Run Featurization"):
     if "kept_smiles_for_featurization" not in st.session_state:
         st.warning("Please run the preprocessing pipeline first, above.")
     else:
-        feature_df, feat_errors = _cached_featurize(
-            tuple(st.session_state["kept_smiles_for_featurization"]),
-            fp_type=fp_type,
-            radius=radius,
-            n_bits=n_bits,
-        )
+        with st.spinner("Computing fingerprints and descriptors..."):
+            feature_df, feat_errors = _cached_featurize(
+                tuple(st.session_state["kept_smiles_for_featurization"]),
+                fp_type=fp_type,
+                radius=radius,
+                n_bits=n_bits,
+            )
+        _feat_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
         st.subheader("Featurized Data")
         st.write(f"Shape: {feature_df.shape}")
@@ -422,9 +414,11 @@ if st.button("Run Featurization"):
         st.download_button(
             "Download featurized data as CSV",
             data=csv_data,
-            file_name="featurized_data.csv",
+            file_name=f"featurized_data_{_feat_ts}.csv",
             mime="text/csv",
         )
+
+st.divider()
 
 st.header("Generate Methods Section")
 st.write("Generate a publication-ready paragraph describing the preprocessing and featurization steps you used.")
