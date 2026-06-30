@@ -143,6 +143,15 @@ def generate_methods_text(settings):
             "it was not used as a filter."
         )
 
+    # QED (informational, not a filter)
+    if settings.get("enable_qed"):
+        sentences.append(
+            "Quantitative Estimate of Druglikeness (QED; Bickerton et al., 2012) "
+            "was computed for each retained compound, yielding a composite score "
+            "from 0 (least drug-like) to 1 (most drug-like); "
+            "it was not used as a filter."
+        )
+
     # Featurization
     fp_type = settings.get("fp_type")
     if fp_type and fp_type in _FP_SENTENCES:

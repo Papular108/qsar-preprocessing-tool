@@ -7,6 +7,7 @@ from rdkit.Chem import Descriptors
 from molvs import Standardizer
 from rdkit.Chem.SaltRemover import SaltRemover
 from rdkit.Chem import FilterCatalog
+from rdkit.Chem.QED import qed as _qed
 import streamlit as st
 
 
@@ -329,6 +330,24 @@ def check_brenk(mol):
     return False, None
 
 
+def compute_qed(mol):
+    """
+    Compute the Quantitative Estimate of Druglikeness (QED) for a molecule.
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (qed_score, error_message)
+            qed_score (float): 0 = least drug-like, 1 = most drug-like
+            error_message (str or None)
+    """
+    try:
+        return _qed(mol), None
+    except Exception as e:
+        return None, f"QED computation failed: {str(e)}"
+
+
 def compute_synthetic_accessibility(mol):
     """
     Compute the Synthetic Accessibility (SA) score for a molecule.
@@ -357,6 +376,7 @@ def run_preprocessing_pipeline(
     enable_muegge=False,
     enable_brenk=False,
     enable_sa_score=False,
+    enable_qed=False,
 ):
     """
     Run the full preprocessing pipeline on a list of SMILES strings.
@@ -370,6 +390,7 @@ def run_preprocessing_pipeline(
         enable_muegge (bool): apply Muegge filter
         enable_brenk (bool): apply Brenk structural alert filter
         enable_sa_score (bool): compute SA score for kept molecules (informational, not a filter)
+        enable_qed (bool): compute QED score for kept molecules (informational, not a filter)
 
     Returns:
         dict: {
@@ -378,6 +399,7 @@ def run_preprocessing_pipeline(
             "audit_trail": list of dicts, one per step, with counts,
             "removed_log": list of dicts, one per removed molecule, with reason,
             "sa_scores": list of SA scores per kept molecule (only if enable_sa_score=True), else None
+            "qed_scores": list of QED scores per kept molecule (only if enable_qed=True), else None
         }
     """
     audit_trail = []
@@ -515,10 +537,18 @@ def run_preprocessing_pipeline(
             score, error = compute_synthetic_accessibility(mol)
             sa_scores.append(score)
 
+    qed_scores = None
+    if enable_qed:
+        qed_scores = []
+        for mol in unique_mols:
+            score, error = compute_qed(mol)
+            qed_scores.append(score)
+
     return {
         "kept_mols": unique_mols,
         "kept_smiles": kept_smiles,
         "audit_trail": audit_trail,
         "removed_log": removed_log,
         "sa_scores": sa_scores,
+        "qed_scores": qed_scores,
     }

@@ -129,6 +129,7 @@ with col2:
 with col3:
     enable_brenk = st.checkbox("Brenk", help="Flags additional structural alerts beyond PAINS")
     enable_sa_score = st.checkbox("SA Score", help="Report synthetic accessibility score (1=easy, 10=hard) for kept molecules. Informational only, does not filter.")
+    enable_qed = st.checkbox("QED Score", help="Quantitative Estimate of Druglikeness (0=least drug-like, 1=most drug-like; Bickerton et al., 2012). Informational only, does not filter.")
 
 if st.button("Run Pipeline"):
     smiles_list = []
@@ -166,6 +167,7 @@ if st.button("Run Pipeline"):
             enable_muegge=enable_muegge,
             enable_brenk=enable_brenk,
             enable_sa_score=enable_sa_score,
+            enable_qed=enable_qed,
         )
         st.session_state["kept_mols_for_featurization"] = result["kept_mols"]
         st.session_state["kept_smiles_for_featurization"] = result["kept_smiles"]
@@ -177,6 +179,7 @@ if st.button("Run Pipeline"):
             "enable_muegge": enable_muegge,
             "enable_brenk": enable_brenk,
             "enable_sa_score": enable_sa_score,
+            "enable_qed": enable_qed,
             "input_count": len(smiles_list),
             "kept_count": len(result["kept_smiles"]),
         }
@@ -200,8 +203,10 @@ if st.button("Run Pipeline"):
         kept_data = {"SMILES": result["kept_smiles"]}
         if result["sa_scores"] is not None:
             kept_data["SA_Score"] = result["sa_scores"]
+        if result["qed_scores"] is not None:
+            kept_data["QED_Score"] = result["qed_scores"]
         kept_df = pd.DataFrame(kept_data)
-        extra_kept = ["SA_Score"] if result["sa_scores"] is not None else []
+        extra_kept = [c for c in ["SA_Score", "QED_Score"] if c in kept_df.columns]
         st.markdown(
             _mol_table_html(kept_df.to_dict("records"), "SMILES", extra_kept),
             unsafe_allow_html=True,
@@ -215,6 +220,7 @@ if st.button("Run Pipeline"):
             "Muegge filter": enable_muegge,
             "Brenk filter": enable_brenk,
             "SA score reported": enable_sa_score,
+            "QED score reported": enable_qed,
             "Input molecule count": len(smiles_list),
             "Kept molecule count": len(result["kept_smiles"]),
         })
@@ -226,6 +232,8 @@ if st.button("Run Pipeline"):
             st.info("At least 2 kept molecules are needed to show distributions.")
         else:
             desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
+            if result["qed_scores"] is not None:
+                desc_df["QED"] = result["qed_scores"]
             st.caption(
                 "Physicochemical property distributions for the kept molecules. "
                 "Hover over bars for exact counts."
@@ -238,11 +246,11 @@ if st.button("Run Pipeline"):
                 ("HBA",            "H-bond Acceptors"),
                 ("RotatableBonds", "Rotatable Bonds"),
             ]
-            row1 = st.columns(3)
-            row2 = st.columns(3)
+            if result["qed_scores"] is not None:
+                _DIST_FIELDS.append(("QED", "QED Score (0–1)"))
+            _grid_rows = [st.columns(3) for _ in range((len(_DIST_FIELDS) + 2) // 3)]
             for i, (field, label) in enumerate(_DIST_FIELDS):
-                col = (row1 if i < 3 else row2)[i % 3]
-                with col:
+                with _grid_rows[i // 3][i % 3]:
                     chart = (
                         alt.Chart(desc_df)
                         .mark_bar(color="#4C72B0")

@@ -80,6 +80,18 @@ st.write(
     """
 )
 
+st.subheader("QED (Quantitative Estimate of Druglikeness)")
+st.write(
+    """
+    QED (Bickerton et al., 2012) combines eight physicochemical properties — molecular
+    weight, LogP, H-bond donors, H-bond acceptors, PSA, number of rotatable bonds,
+    number of aromatic rings, and number of structural alerts — into a single score
+    between 0 (least drug-like) and 1 (most drug-like). Unlike the rule-based filters
+    above, QED uses a continuous desirability function for each property. It is
+    informational and does not filter out molecules automatically.
+    """
+)
+
 st.header("Fingerprint guide")
 st.write(
     """
@@ -127,6 +139,8 @@ st.write(
     - Ertl, P., & Schuffenhauer, A. (2009). Estimation of synthetic accessibility score of
       drug-like molecules based on molecular complexity and fragment contributions.
       *Journal of Cheminformatics*, 1(1), 8.
+    - Bickerton, G. R., et al. (2012). Quantifying the chemical beauty of drugs.
+      *Nature Chemistry*, 4(2), 90-98.
     - MolVS: Molecule Validation and Standardization. https://github.com/mcs07/MolVS
     """
 )
