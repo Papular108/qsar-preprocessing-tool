@@ -6,6 +6,7 @@ from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
 from pipeline.featurization import featurize_dataset
 from pipeline.visualization import mol_to_base64_png
 from pipeline.methodology import generate_methods_text
+from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
 
 def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
     """Render a list of dicts as an HTML table with an embedded structure image column."""
@@ -69,8 +70,27 @@ if st.button("Parse"):
 st.header("Batch preprocessing")
 st.write("Upload a file with one SMILES string per line, or paste them below.")
 
+if "pasted_smiles" not in st.session_state:
+    st.session_state["pasted_smiles"] = ""
+
+with st.expander("Try with example data", expanded=False):
+    _EXAMPLE_OPTIONS = {
+        "FDA-approved drugs (20 molecules)": get_fda_approved_drugs,
+        "PAINS-rich demo set (15 molecules)": get_pains_demo_set,
+    }
+    example_choice = st.selectbox(
+        "Select a dataset",
+        list(_EXAMPLE_OPTIONS.keys()),
+        label_visibility="collapsed",
+    )
+    smiles_list_ex, description_ex = _EXAMPLE_OPTIONS[example_choice]()
+    st.caption(description_ex)
+    if st.button("Load example data"):
+        st.session_state["pasted_smiles"] = "\n".join(smiles_list_ex)
+        st.rerun()
+
 uploaded_file = st.file_uploader("Upload a .txt or .csv file with SMILES (one per line)", type=["txt", "csv", "xlsx"])
-pasted_smiles = st.text_area("Or paste SMILES here (one per line)")
+pasted_smiles = st.text_area("Or paste SMILES here (one per line)", key="pasted_smiles")
 
 max_violations = st.number_input(
     "Max Lipinski violations allowed",
