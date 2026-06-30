@@ -8,6 +8,8 @@ import altair as alt
 from pipeline.visualization import mol_to_base64_png
 from pipeline.methodology import generate_methods_text
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
 
 def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
     """Render a list of dicts as an HTML table with an embedded structure image column."""
@@ -53,6 +55,45 @@ def _cached_descriptors(smiles_tuple):
 def _cached_featurize(smiles_tuple, fp_type, radius, n_bits):
     mols = [Chem.MolFromSmiles(s) for s in smiles_tuple]
     return featurize_dataset(mols, fp_type=fp_type, radius=radius, n_bits=n_bits)
+
+
+@st.cache_data
+def _cached_chemical_space_pca(smiles_tuple):
+    desc_cols = ["MW", "LogP", "TPSA", "HBD", "HBA", "RotatableBonds"]
+
+    user_rows = []
+    for smi in smiles_tuple:
+        mol = Chem.MolFromSmiles(smi)
+        if mol:
+            d = compute_descriptors(mol)
+            d["SMILES"] = smi
+            d["Group"] = "Your molecules"
+            user_rows.append(d)
+
+    fda_smiles, _ = get_fda_approved_drugs()
+    fda_rows = []
+    for smi in fda_smiles:
+        mol = Chem.MolFromSmiles(smi)
+        if mol:
+            d = compute_descriptors(mol)
+            d["SMILES"] = smi
+            d["Group"] = "FDA-approved drugs"
+            fda_rows.append(d)
+
+    combined = pd.DataFrame(user_rows + fda_rows)
+    X = combined[desc_cols].values
+    X_scaled = StandardScaler().fit_transform(X)
+
+    pca = PCA(n_components=2)
+    coords = pca.fit_transform(X_scaled)
+    combined["PC1"] = coords[:, 0]
+    combined["PC2"] = coords[:, 1]
+
+    var = pca.explained_variance_ratio_
+    pc1_label = f"PC1 ({var[0] * 100:.1f}%)"
+    pc2_label = f"PC2 ({var[1] * 100:.1f}%)"
+
+    return combined, pc1_label, pc2_label
 
 
 def build_metadata_block(settings):
@@ -265,6 +306,49 @@ if st.button("Run Pipeline"):
                         .properties(height=180)
                     )
                     st.altair_chart(chart, use_container_width=True)
+
+        if len(result["kept_smiles"]) >= 5:
+            st.subheader("Chemical Space Visualization")
+            pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
+            color_scale = alt.Scale(
+                domain=["Your molecules", "FDA-approved drugs"],
+                range=["#1f77b4", "#BBBBBB"],
+            )
+            pca_chart = (
+                alt.Chart(pca_df)
+                .mark_circle()
+                .encode(
+                    x=alt.X("PC1:Q", title=pc1_label),
+                    y=alt.Y("PC2:Q", title=pc2_label),
+                    color=alt.Color("Group:N", scale=color_scale, legend=alt.Legend(title="Dataset")),
+                    opacity=alt.condition(
+                        alt.datum["Group"] == "Your molecules",
+                        alt.value(0.9),
+                        alt.value(0.35),
+                    ),
+                    size=alt.condition(
+                        alt.datum["Group"] == "Your molecules",
+                        alt.value(80),
+                        alt.value(40),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("SMILES:N"),
+                        alt.Tooltip("MW:Q", format=".1f"),
+                        alt.Tooltip("LogP:Q", format=".2f"),
+                        alt.Tooltip("TPSA:Q", format=".1f"),
+                        alt.Tooltip("HBD:Q"),
+                        alt.Tooltip("HBA:Q"),
+                        alt.Tooltip("Group:N"),
+                    ],
+                )
+                .properties(height=420)
+            )
+            st.altair_chart(pca_chart, use_container_width=True)
+            st.caption(
+                "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
+                "Molecules closer together have more similar properties. "
+                "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+            )
 
 
 st.header("Featurization")
