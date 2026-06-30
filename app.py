@@ -99,6 +99,19 @@ def _cached_chemical_space_pca(smiles_tuple):
     return combined, pc1_label, pc2_label
 
 
+@st.cache_data
+def _cached_corr_matrix(smiles_tuple, sa_scores_tuple=None, qed_scores_tuple=None):
+    desc_df = _cached_descriptors(smiles_tuple).copy()
+    if sa_scores_tuple is not None:
+        desc_df["SA_Score"] = list(sa_scores_tuple)
+    if qed_scores_tuple is not None:
+        desc_df["QED"] = list(qed_scores_tuple)
+    corr = desc_df.corr(numeric_only=True).round(2)
+    corr_long = corr.reset_index().melt(id_vars="index")
+    corr_long.columns = ["descriptor_x", "descriptor_y", "correlation"]
+    return corr_long
+
+
 def build_metadata_block(settings):
     lines = ['# === Reproducibility Metadata ===']
     lines.append(f'# Generated: {datetime.now().isoformat()}')
@@ -304,6 +317,51 @@ if st.button("Run Pipeline"):
                         .properties(height=180)
                     )
                     st.altair_chart(chart, use_container_width=True)
+
+        if len(result["kept_smiles"]) >= 5:
+            st.subheader("Descriptor Correlations")
+            _sa_tuple = tuple(result["sa_scores"]) if result["sa_scores"] is not None else None
+            _qed_tuple = tuple(result["qed_scores"]) if result["qed_scores"] is not None else None
+            corr_long = _cached_corr_matrix(tuple(result["kept_smiles"]), _sa_tuple, _qed_tuple)
+
+            corr_rect = (
+                alt.Chart(corr_long)
+                .mark_rect()
+                .encode(
+                    x=alt.X("descriptor_x:N", title=None, sort=None),
+                    y=alt.Y("descriptor_y:N", title=None, sort=None),
+                    color=alt.Color(
+                        "correlation:Q",
+                        scale=alt.Scale(domain=[-1, 0, 1], range=["#d73027", "#ffffff", "#4575b4"]),
+                        legend=alt.Legend(title="Pearson r"),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("descriptor_x:N", title="Descriptor X"),
+                        alt.Tooltip("descriptor_y:N", title="Descriptor Y"),
+                        alt.Tooltip("correlation:Q", title="Pearson r", format=".2f"),
+                    ],
+                )
+            )
+            corr_text = (
+                alt.Chart(corr_long)
+                .mark_text(fontSize=11)
+                .encode(
+                    x=alt.X("descriptor_x:N", sort=None),
+                    y=alt.Y("descriptor_y:N", sort=None),
+                    text=alt.Text("correlation:Q", format=".2f"),
+                    color=alt.condition(
+                        "abs(datum.correlation) > 0.6",
+                        alt.value("white"),
+                        alt.value("#333333"),
+                    ),
+                )
+            )
+            st.altair_chart((corr_rect + corr_text).properties(height=350), use_container_width=True)
+            st.caption(
+                "This heatmap shows Pearson correlations between physicochemical descriptors. "
+                "Strong correlations (close to +1 or -1) indicate redundant features — consider removing "
+                "one of a highly correlated pair before training ML models to reduce multicollinearity."
+            )
 
         if len(result["kept_smiles"]) >= 5:
             st.subheader("Chemical Space Visualization")
