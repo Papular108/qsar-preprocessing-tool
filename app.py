@@ -234,13 +234,19 @@ if st.button("Run Pipeline"):
         st.dataframe(audit_df)
 
         if result["removed_log"]:
-            st.subheader("Removed Molecules (with reasons)")
-            st.markdown(
-                _mol_table_html(result["removed_log"], "smiles", ["original_index", "step", "reason"]),
-                unsafe_allow_html=True,
+            st.subheader("Removed Molecules")
+            st.write(f"{len(result['removed_log'])} molecules removed across all steps")
+            removed_df = pd.DataFrame(result["removed_log"])[["original_index", "smiles", "step", "reason"]]
+            st.download_button(
+                "Download removed molecules as CSV",
+                data=removed_df.to_csv(index=False),
+                file_name="removed_molecules.csv",
+                mime="text/csv",
             )
+            with st.expander("View removed molecules"):
+                st.dataframe(removed_df, use_container_width=True)
 
-        st.subheader("Kept Molecules (SMILES)")
+        st.subheader("Kept Molecules")
         kept_data = {"SMILES": result["kept_smiles"]}
         if result["sa_scores"] is not None:
             kept_data["SA_Score"] = result["sa_scores"]
@@ -248,10 +254,6 @@ if st.button("Run Pipeline"):
             kept_data["QED_Score"] = result["qed_scores"]
         kept_df = pd.DataFrame(kept_data)
         extra_kept = [c for c in ["SA_Score", "QED_Score"] if c in kept_df.columns]
-        st.markdown(
-            _mol_table_html(kept_df.to_dict("records"), "SMILES", extra_kept),
-            unsafe_allow_html=True,
-        )
 
         metadata = build_metadata_block({
             "Lipinski max violations": max_violations,
@@ -266,7 +268,15 @@ if st.button("Run Pipeline"):
             "Kept molecule count": len(result["kept_smiles"]),
         })
         csv_data = metadata + kept_df.to_csv(index=False)
+
+        st.write(f"{len(kept_df)} molecules kept after preprocessing")
         st.download_button("Download kept molecules as CSV", data=csv_data, file_name="kept_molecules.csv", mime="text/csv")
+        with st.expander("View kept molecules (first 20)"):
+            preview_records = kept_df.head(20).to_dict("records")
+            st.markdown(
+                _mol_table_html(preview_records, "SMILES", extra_kept),
+                unsafe_allow_html=True,
+            )
 
         st.subheader("Descriptor Distributions")
         if len(result["kept_smiles"]) < 2:
