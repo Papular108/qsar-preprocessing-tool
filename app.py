@@ -3,7 +3,8 @@ import pandas as pd
 from datetime import datetime
 from rdkit import rdBase, Chem
 from pipeline.preprocessing import parse_smiles, run_preprocessing_pipeline
-from pipeline.featurization import featurize_dataset
+from pipeline.featurization import featurize_dataset, compute_descriptors
+import altair as alt
 from pipeline.visualization import mol_to_base64_png
 from pipeline.methodology import generate_methods_text
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
@@ -36,6 +37,16 @@ def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
         f"<tbody>{body}</tbody>"
         f"</table></div>"
     )
+
+
+@st.cache_data
+def _cached_descriptors(smiles_tuple):
+    rows = []
+    for smi in smiles_tuple:
+        mol = Chem.MolFromSmiles(smi)
+        if mol:
+            rows.append(compute_descriptors(mol))
+    return pd.DataFrame(rows)
 
 
 @st.cache_data
@@ -209,6 +220,43 @@ if st.button("Run Pipeline"):
         })
         csv_data = metadata + kept_df.to_csv(index=False)
         st.download_button("Download kept molecules as CSV", data=csv_data, file_name="kept_molecules.csv", mime="text/csv")
+
+        st.subheader("Descriptor Distributions")
+        if len(result["kept_smiles"]) < 2:
+            st.info("At least 2 kept molecules are needed to show distributions.")
+        else:
+            desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
+            st.caption(
+                "Physicochemical property distributions for the kept molecules. "
+                "Hover over bars for exact counts."
+            )
+            _DIST_FIELDS = [
+                ("MW",             "Molecular Weight (Da)"),
+                ("LogP",           "LogP"),
+                ("TPSA",           "TPSA (Å²)"),
+                ("HBD",            "H-bond Donors"),
+                ("HBA",            "H-bond Acceptors"),
+                ("RotatableBonds", "Rotatable Bonds"),
+            ]
+            row1 = st.columns(3)
+            row2 = st.columns(3)
+            for i, (field, label) in enumerate(_DIST_FIELDS):
+                col = (row1 if i < 3 else row2)[i % 3]
+                with col:
+                    chart = (
+                        alt.Chart(desc_df)
+                        .mark_bar(color="#4C72B0")
+                        .encode(
+                            alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
+                            alt.Y("count()", title="Count"),
+                            tooltip=[
+                                alt.Tooltip(f"{field}:Q", bin=True, title=label),
+                                alt.Tooltip("count()", title="Count"),
+                            ],
+                        )
+                        .properties(height=180)
+                    )
+                    st.altair_chart(chart, use_container_width=True)
 
 
 st.header("Featurization")
