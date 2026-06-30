@@ -171,16 +171,71 @@ if uploaded_file is not None:
                 key="smiles_col_early",
             )
 
+# ── Auto-fill pchembl_value from standard_value (ChEMBL convention) ──────────
+_pchembl_fill_map = {}
+_pchembl_fill_summary = None
+
+if (
+    _uploaded_df is not None
+    and "pchembl_value" in _uploaded_df.columns
+    and "standard_value" in _uploaded_df.columns
+):
+    import math as _math
+    _pchembl_missing = _uploaded_df["pchembl_value"].isna()
+    _n_missing = int(_pchembl_missing.sum())
+    if _n_missing > 0:
+        _uploaded_df = _uploaded_df.copy()
+        _n_computed = 0
+        for _idx in _uploaded_df[_pchembl_missing].index:
+            _sv = _uploaded_df.at[_idx, "standard_value"]
+            try:
+                _sv_f = float(_sv)
+                if _sv_f > 0:
+                    _uploaded_df.at[_idx, "pchembl_value"] = round(9.0 - _math.log10(_sv_f), 3)
+                    _n_computed += 1
+            except (ValueError, TypeError):
+                pass
+        _pchembl_fill_summary = (
+            f"{_n_computed} of {_n_missing} pchembl_value entries were missing "
+            f"and have been computed from standard_value."
+        )
+    if _uploaded_smiles_col:
+        for _, _row in _uploaded_df.iterrows():
+            _pv = _row.get("pchembl_value")
+            if pd.notna(_pv):
+                _mol_tmp = Chem.MolFromSmiles(str(_row[_uploaded_smiles_col]))
+                if _mol_tmp:
+                    _pchembl_fill_map[Chem.MolToSmiles(_mol_tmp)] = _pv
+
 # ── Activity Labeling (CSV/XLSX only) ────────────────────────────────────────
 _activity_label_map = {}
 _activity_pval_map = {}
 
 if _uploaded_df is not None:
     with st.expander("Activity Labeling (optional)", expanded=False):
+
+        if _pchembl_fill_summary:
+            st.info(_pchembl_fill_summary)
+
+        with st.expander("About pIC50 conversion", expanded=False):
+            st.markdown(
+                "**pIC50 = −log₁₀(IC50 × 10⁻⁹) = 9 − log₁₀(IC50 in nM)**\n\n"
+                "Higher pIC50 = more potent compound. "
+                "A pIC50 of 6 corresponds to an IC50 of 1,000 nM (1 μM).\n\n"
+                "| pIC50 | IC50 (nM) | Potency tier |\n"
+                "|:---:|---:|---|\n"
+                "| 5 | 10,000 nM | Weak |\n"
+                "| 6 | 1,000 nM | Moderate |\n"
+                "| 7 | 100 nM | Good |\n"
+                "| 8 | 10 nM | High |\n"
+                "| 9 | 1 nM | Very high |\n"
+            )
+
         st.write(
-            "Assign Active / Inactive labels from a bioactivity column in your file. "
+            "Assign Active / Inactive labels from a bioactivity column. "
             "Values must be in **nanomolar (nM)**."
         )
+
         _numeric_cols = [
             c for c in _uploaded_df.select_dtypes(include="number").columns
             if c != _uploaded_smiles_col
@@ -188,7 +243,7 @@ if _uploaded_df is not None:
         if not _numeric_cols:
             st.info("No numeric columns found in the uploaded file for activity labeling.")
         else:
-            _act_keywords = ["ic50", "ki", "ec50", "kd", "activity", "potency"]
+            _act_keywords = ["ic50", "ki", "ec50", "kd", "activity", "potency", "standard_value"]
             _auto_act_col = next(
                 (c for c in _numeric_cols if any(kw in c.lower() for kw in _act_keywords)),
                 None,
@@ -233,7 +288,7 @@ if _uploaded_df is not None:
                         _activity_label_map[_csmi] = _row["Activity_Label"]
                         _activity_pval_map[_csmi] = _row["pActivity"]
 
-            # Summary
+            # Summary line + bar chart
             _label_counts = (
                 _labeled_df["Activity_Label"].dropna().value_counts().reset_index()
             )
@@ -249,7 +304,7 @@ if _uploaded_df is not None:
             if not _label_counts.empty:
                 _bar = (
                     alt.Chart(_label_counts)
-                    .mark_bar()
+                    .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
                     .encode(
                         x=alt.X("Label:N", title=None,
                                 sort=["Active", "Intermediate", "Inactive"]),
@@ -264,7 +319,7 @@ if _uploaded_df is not None:
                         ),
                         tooltip=["Label:N", "Count:Q"],
                     )
-                    .properties(height=180)
+                    .properties(height=160)
                 )
                 st.altair_chart(_bar, use_container_width=True)
 
@@ -372,8 +427,10 @@ if st.button("Run Pipeline"):
         if _activity_label_map:
             kept_data["Activity_Label"] = [_activity_label_map.get(s) for s in result["kept_smiles"]]
             kept_data["pActivity"] = [_activity_pval_map.get(s) for s in result["kept_smiles"]]
+        if _pchembl_fill_map:
+            kept_data["pchembl_value"] = [_pchembl_fill_map.get(s) for s in result["kept_smiles"]]
         kept_df = pd.DataFrame(kept_data)
-        extra_kept = [c for c in ["SA_Score", "QED_Score", "Activity_Label", "pActivity"] if c in kept_df.columns]
+        extra_kept = [c for c in ["SA_Score", "QED_Score", "Activity_Label", "pActivity", "pchembl_value"] if c in kept_df.columns]
 
         metadata = build_metadata_block({
             "Lipinski max violations": max_violations,
