@@ -38,6 +38,12 @@ def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
     )
 
 
+@st.cache_data
+def _cached_featurize(smiles_tuple, fp_type, radius, n_bits):
+    mols = [Chem.MolFromSmiles(s) for s in smiles_tuple]
+    return featurize_dataset(mols, fp_type=fp_type, radius=radius, n_bits=n_bits)
+
+
 def build_metadata_block(settings):
     lines = ['# === Reproducibility Metadata ===']
     lines.append(f'# Generated: {datetime.now().isoformat()}')
@@ -151,6 +157,7 @@ if st.button("Run Pipeline"):
             enable_sa_score=enable_sa_score,
         )
         st.session_state["kept_mols_for_featurization"] = result["kept_mols"]
+        st.session_state["kept_smiles_for_featurization"] = result["kept_smiles"]
         st.session_state["pipeline_settings"] = {
             "lipinski_max_violations": max_violations,
             "enable_veber": enable_veber,
@@ -236,11 +243,11 @@ else:
     radius = 2
 
 if st.button("Run Featurization"):
-    if "kept_mols_for_featurization" not in st.session_state:
+    if "kept_smiles_for_featurization" not in st.session_state:
         st.warning("Please run the preprocessing pipeline first, above.")
     else:
-        feature_df, feat_errors = featurize_dataset(
-            st.session_state["kept_mols_for_featurization"],
+        feature_df, feat_errors = _cached_featurize(
+            tuple(st.session_state["kept_smiles_for_featurization"]),
             fp_type=fp_type,
             radius=radius,
             n_bits=n_bits,

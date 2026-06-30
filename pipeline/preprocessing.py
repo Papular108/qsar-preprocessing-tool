@@ -5,16 +5,33 @@ sys.path.append(RDConfig.RDContribDir + "/SA_Score")
 import sascorer
 from rdkit.Chem import Descriptors
 from molvs import Standardizer
-standardizer = Standardizer()
 from rdkit.Chem.SaltRemover import SaltRemover
-salt_remover = SaltRemover()
 from rdkit.Chem import FilterCatalog
-pains_params = FilterCatalog.FilterCatalogParams()
-pains_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS)
-pains_catalog = FilterCatalog.FilterCatalog(pains_params)
-brenk_params = FilterCatalog.FilterCatalogParams()
-brenk_params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.BRENK)
-brenk_catalog = FilterCatalog.FilterCatalog(brenk_params)
+import streamlit as st
+
+
+@st.cache_resource
+def _get_standardizer():
+    return Standardizer()
+
+
+@st.cache_resource
+def _get_salt_remover():
+    return SaltRemover()
+
+
+@st.cache_resource
+def _get_pains_catalog():
+    params = FilterCatalog.FilterCatalogParams()
+    params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS)
+    return FilterCatalog.FilterCatalog(params)
+
+
+@st.cache_resource
+def _get_brenk_catalog():
+    params = FilterCatalog.FilterCatalogParams()
+    params.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.BRENK)
+    return FilterCatalog.FilterCatalog(params)
 
 
 def parse_smiles(smiles):
@@ -50,7 +67,7 @@ def standardize_molecule(mol):
             error_message is None if successful, otherwise a string explaining what went wrong
     """
     try:
-        standardized_mol = standardizer.standardize(mol)
+        standardized_mol = _get_standardizer().standardize(mol)
         return standardized_mol, None
     except Exception as e:
         return None, f"Standardization failed: {str(e)}"
@@ -69,7 +86,7 @@ def strip_salts(mol):
             error_message is None if successful, otherwise a string explaining what went wrong
     """
     try:
-        stripped_mol = salt_remover.StripMol(mol)
+        stripped_mol = _get_salt_remover().StripMol(mol)
         return stripped_mol, None
     except Exception as e:
         return None, f"Salt stripping failed: {str(e)}"
@@ -134,7 +151,7 @@ def check_pains(mol):
             is_pains (bool): True if the molecule matches a PAINS pattern
             matched_name (str or None): name of the matched PAINS pattern, or None if no match
     """
-    match = pains_catalog.GetFirstMatch(mol)
+    match = _get_pains_catalog().GetFirstMatch(mol)
 
     if match is not None:
         return True, match.GetDescription()
@@ -304,7 +321,7 @@ def check_brenk(mol):
     Returns:
         tuple: (is_brenk_hit, matched_name)
     """
-    match = brenk_catalog.GetFirstMatch(mol)
+    match = _get_brenk_catalog().GetFirstMatch(mol)
 
     if match is not None:
         return True, match.GetDescription()
