@@ -217,20 +217,6 @@ if _uploaded_df is not None:
         if _pchembl_fill_summary:
             st.info(_pchembl_fill_summary)
 
-        with st.expander("About pIC50 conversion", expanded=False):
-            st.markdown(
-                "**pIC50 = −log₁₀(IC50 × 10⁻⁹) = 9 − log₁₀(IC50 in nM)**\n\n"
-                "Higher pIC50 = more potent compound. "
-                "A pIC50 of 6 corresponds to an IC50 of 1,000 nM (1 μM).\n\n"
-                "| pIC50 | IC50 (nM) | Potency tier |\n"
-                "|:---:|---:|---|\n"
-                "| 5 | 10,000 nM | Weak |\n"
-                "| 6 | 1,000 nM | Moderate |\n"
-                "| 7 | 100 nM | Good |\n"
-                "| 8 | 10 nM | High |\n"
-                "| 9 | 1 nM | Very high |\n"
-            )
-
         st.write(
             "Assign Active / Inactive labels from a bioactivity column. "
             "Values must be in **nanomolar (nM)**."
@@ -273,6 +259,53 @@ if _uploaded_df is not None:
                         help="Molecules above this value are labeled 'Inactive'.",
                     )
 
+            # Dynamic formula expander based on selected activity type
+            _p_label = f"p{_act_type}"
+            with st.expander(f"About {_p_label} conversion", expanded=False):
+                st.markdown(
+                    f"**{_p_label} = −log₁₀({_act_type} × 10⁻⁹) = 9 − log₁₀({_act_type} in nM)**\n\n"
+                    f"Higher {_p_label} = more potent compound. "
+                    f"A {_p_label} of 6 corresponds to a {_act_type} of 1,000 nM (1 μM).\n\n"
+                    f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
+                    "|:---:|---:|---|\n"
+                    "| 5 | 10,000 nM | Weak |\n"
+                    "| 6 | 1,000 nM | Moderate |\n"
+                    "| 7 | 100 nM | Good |\n"
+                    "| 8 | 10 nM | High |\n"
+                    "| 9 | 1 nM | Very high |\n"
+                )
+
+            # Visual threshold zone indicator
+            if _use_3class:
+                st.markdown(
+                    f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                    f"font-weight:600;margin:8px 0 4px 0;'>"
+                    f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                    f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                    f"Active<br><span style='font-weight:400'>≤ {_thr_active:,} nM</span></div>"
+                    f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
+                    f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
+                    f"Intermediate<br><span style='font-weight:400'>{_thr_active:,} – {_thr_inactive:,} nM</span></div>"
+                    f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                    f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                    f"Inactive<br><span style='font-weight:400'>> {_thr_inactive:,} nM</span></div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                    f"font-weight:600;margin:8px 0 4px 0;'>"
+                    f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                    f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                    f"Active<br><span style='font-weight:400'>≤ {_thr_active:,} nM</span></div>"
+                    f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                    f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                    f"Inactive<br><span style='font-weight:400'>> {_thr_active:,} nM</span></div>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
             _labeled_df, _skipped = label_activity(
                 _uploaded_df, _act_col, _act_type, _thr_active, _thr_inactive, _use_3class
             )
@@ -293,8 +326,12 @@ if _uploaded_df is not None:
                 _labeled_df["Activity_Label"].dropna().value_counts().reset_index()
             )
             _label_counts.columns = ["Label", "Count"]
+            # Enforce Active → Intermediate → Inactive order for summary text
+            _ordered_labels = [l for l in ["Active", "Intermediate", "Inactive"]
+                               if l in _label_counts["Label"].values]
             _summary_parts = [
-                f"**{r['Count']} {r['Label']}**" for _, r in _label_counts.iterrows()
+                f"**{_label_counts.loc[_label_counts['Label'] == l, 'Count'].iloc[0]} {l}**"
+                for l in _ordered_labels
             ]
             st.write(
                 ", ".join(_summary_parts)
