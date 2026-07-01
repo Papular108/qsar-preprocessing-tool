@@ -217,11 +217,6 @@ if _uploaded_df is not None:
         if _pchembl_fill_summary:
             st.info(_pchembl_fill_summary)
 
-        st.write(
-            "Assign Active / Inactive labels from a bioactivity column. "
-            "Values must be in **nanomolar (nM)**."
-        )
-
         _numeric_cols = [
             c for c in _uploaded_df.select_dtypes(include="number").columns
             if c != _uploaded_smiles_col
@@ -241,17 +236,60 @@ if _uploaded_df is not None:
                 _act_col = st.selectbox("Activity column", _numeric_cols, index=_act_default_idx)
                 _act_type = st.selectbox(
                     "Activity type", ["IC50", "Ki", "EC50", "Kd"],
-                    help="Select the measurement type (values assumed to be in nM).",
+                    help="Select the measurement type.",
                 )
             with _la_c2:
-                _thr_active = st.number_input(
-                    "Active threshold (nM)", value=1000, min_value=1,
-                    help="Molecules with activity ≤ this value are labeled 'Active'.",
+                # Auto-detect log-scale columns
+                _log_keywords = ["pchembl", "pic50", "pki", "pec50", "pkd", "pactivity"]
+                _auto_log = (
+                    _act_col.lower().startswith("p")
+                    or any(kw in _act_col.lower() for kw in _log_keywords)
                 )
-                _use_3class = st.checkbox(
-                    "Use three-class labeling (Active / Intermediate / Inactive)",
-                    help="Molecules between the two thresholds are labeled 'Intermediate'.",
+                _is_log_scale = st.checkbox(
+                    "Values are already on −log₁₀ scale (e.g. pIC50, pKi, pchembl_value)",
+                    value=_auto_log,
+                    help="Check this if your column contains pIC50/pKi/pchembl values "
+                         "where higher = more potent. Leave unchecked for raw nM values "
+                         "where lower = more potent.",
                 )
+
+            # Threshold inputs adapt to scale
+            if _is_log_scale:
+                _unit_label = ""  # unitless
+                _scale_note = "Values on −log₁₀ scale (higher = more potent)."
+                _thr_col1, _thr_col2 = st.columns(2)
+                with _thr_col1:
+                    _thr_active = st.number_input(
+                        "Active threshold (−log₁₀)", value=7.0, min_value=0.0,
+                        step=0.5, format="%.1f",
+                        help="Molecules with pActivity ≥ this value are labeled 'Active'.",
+                    )
+                with _thr_col2:
+                    _use_3class = st.checkbox(
+                        "Use three-class labeling (Active / Intermediate / Inactive)",
+                        help="Molecules between the two thresholds are labeled 'Intermediate'.",
+                    )
+                _thr_inactive = _thr_active - 1.0  # default: one log unit below
+                if _use_3class:
+                    _thr_inactive = st.number_input(
+                        "Inactive threshold (−log₁₀)", value=_thr_active - 1.0,
+                        min_value=0.0, step=0.5, format="%.1f",
+                        help="Molecules with pActivity < this value are labeled 'Inactive'.",
+                    )
+            else:
+                _unit_label = " nM"
+                _scale_note = "Values in **nanomolar (nM)** (lower = more potent)."
+                _thr_col1, _thr_col2 = st.columns(2)
+                with _thr_col1:
+                    _thr_active = st.number_input(
+                        "Active threshold (nM)", value=1000, min_value=1,
+                        help="Molecules with activity ≤ this value are labeled 'Active'.",
+                    )
+                with _thr_col2:
+                    _use_3class = st.checkbox(
+                        "Use three-class labeling (Active / Intermediate / Inactive)",
+                        help="Molecules between the two thresholds are labeled 'Intermediate'.",
+                    )
                 _thr_inactive = 10000
                 if _use_3class:
                     _thr_inactive = st.number_input(
@@ -259,55 +297,121 @@ if _uploaded_df is not None:
                         help="Molecules above this value are labeled 'Inactive'.",
                     )
 
+            st.write(_scale_note)
+
+            # Threshold validation
+            if _use_3class:
+                if _is_log_scale and _thr_inactive >= _thr_active:
+                    st.warning(
+                        f"Inactive threshold ({_thr_inactive:.1f}) should be **less than** "
+                        f"active threshold ({_thr_active:.1f}) on −log₁₀ scale "
+                        f"(higher = more potent)."
+                    )
+                elif not _is_log_scale and _thr_inactive <= _thr_active:
+                    st.warning(
+                        f"Inactive threshold ({_thr_inactive:,} nM) should be **greater than** "
+                        f"active threshold ({_thr_active:,} nM) on nM scale "
+                        f"(lower = more potent)."
+                    )
+
             # Dynamic formula expander based on selected activity type
             _p_label = f"p{_act_type}"
-            with st.expander(f"About {_p_label} conversion", expanded=False):
-                st.markdown(
-                    f"**{_p_label} = −log₁₀({_act_type} × 10⁻⁹) = 9 − log₁₀({_act_type} in nM)**\n\n"
-                    f"Higher {_p_label} = more potent compound. "
-                    f"A {_p_label} of 6 corresponds to a {_act_type} of 1,000 nM (1 μM).\n\n"
-                    f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
-                    "|:---:|---:|---|\n"
-                    "| 5 | 10,000 nM | Weak |\n"
-                    "| 6 | 1,000 nM | Moderate |\n"
-                    "| 7 | 100 nM | Good |\n"
-                    "| 8 | 10 nM | High |\n"
-                    "| 9 | 1 nM | Very high |\n"
-                )
+            if _is_log_scale:
+                with st.expander(f"About {_p_label} scale", expanded=False):
+                    st.markdown(
+                        f"Your column appears to contain **{_p_label}** values "
+                        f"(already on −log₁₀ scale).\n\n"
+                        f"Higher {_p_label} = more potent compound.\n\n"
+                        f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
+                        "|:---:|---:|---|\n"
+                        "| 5 | 10,000 nM | Weak |\n"
+                        "| 6 | 1,000 nM | Moderate |\n"
+                        "| 7 | 100 nM | Good |\n"
+                        "| 8 | 10 nM | High |\n"
+                        "| 9 | 1 nM | Very high |\n"
+                    )
+            else:
+                with st.expander(f"About {_p_label} conversion", expanded=False):
+                    st.markdown(
+                        f"**{_p_label} = −log₁₀({_act_type} × 10⁻⁹) = 9 − log₁₀({_act_type} in nM)**\n\n"
+                        f"Higher {_p_label} = more potent compound. "
+                        f"A {_p_label} of 6 corresponds to a {_act_type} of 1,000 nM (1 μM).\n\n"
+                        f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
+                        "|:---:|---:|---|\n"
+                        "| 5 | 10,000 nM | Weak |\n"
+                        "| 6 | 1,000 nM | Moderate |\n"
+                        "| 7 | 100 nM | Good |\n"
+                        "| 8 | 10 nM | High |\n"
+                        "| 9 | 1 nM | Very high |\n"
+                    )
 
             # Visual threshold zone indicator
-            if _use_3class:
-                st.markdown(
-                    f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
-                    f"font-weight:600;margin:8px 0 4px 0;'>"
-                    f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
-                    f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
-                    f"Active<br><span style='font-weight:400'>≤ {_thr_active:,} nM</span></div>"
-                    f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
-                    f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
-                    f"Intermediate<br><span style='font-weight:400'>{_thr_active:,} – {_thr_inactive:,} nM</span></div>"
-                    f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
-                    f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
-                    f"Inactive<br><span style='font-weight:400'>> {_thr_inactive:,} nM</span></div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
+            if _is_log_scale:
+                # Log scale: higher = more potent (left=Active high, right=Inactive low)
+                if _use_3class:
+                    st.markdown(
+                        f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                        f"font-weight:600;margin:8px 0 4px 0;'>"
+                        f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                        f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                        f"Active<br><span style='font-weight:400'>&ge; {_thr_active:.1f}</span></div>"
+                        f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
+                        f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
+                        f"Intermediate<br><span style='font-weight:400'>{_thr_inactive:.1f} – {_thr_active:.1f}</span></div>"
+                        f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                        f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                        f"Inactive<br><span style='font-weight:400'>&lt; {_thr_inactive:.1f}</span></div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                        f"font-weight:600;margin:8px 0 4px 0;'>"
+                        f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                        f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                        f"Active<br><span style='font-weight:400'>&ge; {_thr_active:.1f}</span></div>"
+                        f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                        f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                        f"Inactive<br><span style='font-weight:400'>&lt; {_thr_active:.1f}</span></div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
             else:
-                st.markdown(
-                    f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
-                    f"font-weight:600;margin:8px 0 4px 0;'>"
-                    f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
-                    f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
-                    f"Active<br><span style='font-weight:400'>≤ {_thr_active:,} nM</span></div>"
-                    f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
-                    f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
-                    f"Inactive<br><span style='font-weight:400'>> {_thr_active:,} nM</span></div>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
+                # nM scale: lower = more potent (left=Active low, right=Inactive high)
+                if _use_3class:
+                    st.markdown(
+                        f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                        f"font-weight:600;margin:8px 0 4px 0;'>"
+                        f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                        f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                        f"Active<br><span style='font-weight:400'>&le; {_thr_active:,} nM</span></div>"
+                        f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
+                        f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
+                        f"Intermediate<br><span style='font-weight:400'>{_thr_active:,} – {_thr_inactive:,} nM</span></div>"
+                        f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                        f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                        f"Inactive<br><span style='font-weight:400'>&gt; {_thr_inactive:,} nM</span></div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                        f"font-weight:600;margin:8px 0 4px 0;'>"
+                        f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                        f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                        f"Active<br><span style='font-weight:400'>&le; {_thr_active:,} nM</span></div>"
+                        f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                        f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                        f"Inactive<br><span style='font-weight:400'>&gt; {_thr_active:,} nM</span></div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
 
             _labeled_df, _skipped = label_activity(
-                _uploaded_df, _act_col, _act_type, _thr_active, _thr_inactive, _use_3class
+                _uploaded_df, _act_col, _act_type, _thr_active, _thr_inactive,
+                _use_3class, is_log_scale=_is_log_scale,
             )
 
             # Build canonical SMILES → label map for downstream use

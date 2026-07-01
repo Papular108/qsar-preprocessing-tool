@@ -374,22 +374,26 @@ def label_activity(
     threshold_active=1000,
     threshold_inactive=10000,
     use_intermediate=False,
+    is_log_scale=False,
 ):
     """
-    Convert continuous bioactivity values (nM) into categorical labels for ML classification.
+    Convert continuous bioactivity values into categorical labels for ML classification.
 
     Parameters:
-        df (pd.DataFrame): input DataFrame with an activity column in nanomolar units
+        df (pd.DataFrame): input DataFrame with an activity column
         activity_column (str): column name containing activity values
         activity_type (str): label for the measurement type (e.g. "IC50", "Ki")
-        threshold_active (float): nM threshold; values <= this are "Active"
-        threshold_inactive (float): nM threshold for three-class mode; values > this are "Inactive"
+        threshold_active (float): threshold for "Active" label
+        threshold_inactive (float): threshold for three-class mode "Inactive" boundary
         use_intermediate (bool): when True, adds an "Intermediate" class between the two thresholds
+        is_log_scale (bool): when True, values are already on -log₁₀ scale (e.g. pIC50, pKi).
+            Higher = more potent. Active = value >= threshold_active.
+            When False (default), values are in nM. Lower = more potent. Active = value <= threshold_active.
 
     Returns:
         tuple: (labeled_df, skipped)
             labeled_df (pd.DataFrame): copy of df with new columns "Activity_Label" and "pActivity"
-            skipped (list of dicts): rows skipped due to missing, zero, or negative values
+            skipped (list of dicts): rows skipped due to missing or invalid values
     """
     import math
 
@@ -412,22 +416,35 @@ def label_activity(
             p_values.append(None)
             skipped.append({"index": idx, "value": val, "reason": "non-numeric value"})
             continue
-        if fval <= 0:
-            labels.append(None)
-            p_values.append(None)
-            skipped.append({"index": idx, "value": fval, "reason": "non-positive value (cannot compute log)"})
-            continue
 
-        # pActivity = -log10(value in M) = -log10(value_nM × 1e-9) = 9 - log10(value_nM)
-        p_val = round(9.0 - math.log10(fval), 3)
-        p_values.append(p_val)
+        if is_log_scale:
+            # Values already on -log₁₀ scale: higher = more potent
+            p_values.append(round(fval, 3))
 
-        if fval <= threshold_active:
-            labels.append("Active")
-        elif use_intermediate and fval <= threshold_inactive:
-            labels.append("Intermediate")
+            if fval >= threshold_active:
+                labels.append("Active")
+            elif use_intermediate and fval >= threshold_inactive:
+                labels.append("Intermediate")
+            else:
+                labels.append("Inactive")
         else:
-            labels.append("Inactive")
+            # Values in nM: lower = more potent
+            if fval <= 0:
+                labels.append(None)
+                p_values.append(None)
+                skipped.append({"index": idx, "value": fval, "reason": "non-positive value (cannot compute log)"})
+                continue
+
+            # pActivity = -log10(value in M) = -log10(value_nM × 1e-9) = 9 - log10(value_nM)
+            p_val = round(9.0 - math.log10(fval), 3)
+            p_values.append(p_val)
+
+            if fval <= threshold_active:
+                labels.append("Active")
+            elif use_intermediate and fval <= threshold_inactive:
+                labels.append("Intermediate")
+            else:
+                labels.append("Inactive")
 
     df["Activity_Label"] = labels
     df["pActivity"] = p_values
