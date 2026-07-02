@@ -694,6 +694,36 @@ if st.button("Run Pipeline"):
         audit_df = pd.DataFrame(result["audit_trail"])
         st.dataframe(audit_df)
 
+        # Activity class breakdown (only if user did activity labeling)
+        if _activity_label_map:
+            st.subheader("Activity Class Breakdown")
+            _kept_labels = [_activity_label_map.get(s) for s in result["kept_smiles"]]
+            _removed_labels = [
+                _activity_label_map.get(r["smiles"]) for r in result["removed_log"]
+            ]
+            _class_names = ["Active", "Intermediate", "Inactive"]
+            _active_classes = [c for c in _class_names
+                               if c in _kept_labels or c in _removed_labels]
+
+            _kept_cols = st.columns(len(_active_classes))
+            for _ci, _cls in enumerate(_active_classes):
+                _n_kept = _kept_labels.count(_cls)
+                _n_removed = _removed_labels.count(_cls)
+                _kept_cols[_ci].metric(
+                    f"{_cls}",
+                    f"{_n_kept} kept",
+                    delta=f"{_n_removed} removed" if _n_removed else None,
+                    delta_color="off",
+                )
+            _n_unlabeled_kept = sum(1 for l in _kept_labels if l is None)
+            _n_unlabeled_removed = sum(1 for l in _removed_labels if l is None)
+            if _n_unlabeled_kept or _n_unlabeled_removed:
+                st.caption(
+                    f"{_n_unlabeled_kept + _n_unlabeled_removed} molecules had no "
+                    f"activity label ({_n_unlabeled_kept} kept, "
+                    f"{_n_unlabeled_removed} removed)."
+                )
+
         if result["removed_log"]:
             st.subheader("Removed Molecules")
             st.write(f"{len(result['removed_log'])} molecules removed across all steps")
@@ -935,11 +965,51 @@ if st.button("Run Featurization"):
         })
         csv_data = feat_metadata + feature_df.to_csv(index=False)
         st.download_button(
-            "Download featurized data as CSV",
+            "Download all featurized data as CSV",
             data=csv_data,
             file_name=f"featurized_data_{_feat_ts}.csv",
             mime="text/csv",
         )
+
+        # Activity-aware downloads and preview
+        _feat_smiles = list(st.session_state["kept_smiles_for_featurization"])
+        _feat_labels = [_activity_label_map.get(s) for s in _feat_smiles]
+        _has_feat_labels = any(l is not None for l in _feat_labels)
+
+        if _has_feat_labels:
+            _feat_df_with_label = feature_df.copy()
+            _feat_df_with_label.insert(0, "_Activity_Label", _feat_labels)
+
+            _class_order = ["Active", "Intermediate", "Inactive"]
+            _present_classes = [c for c in _class_order if c in _feat_labels]
+
+            st.write("**Download by activity class:**")
+            _dl_cols = st.columns(len(_present_classes))
+            for _di, _cls in enumerate(_present_classes):
+                _subset = _feat_df_with_label[
+                    _feat_df_with_label["_Activity_Label"] == _cls
+                ].drop(columns=["_Activity_Label"])
+                _dl_cols[_di].download_button(
+                    f"Download {_cls} ({len(_subset)})",
+                    data=_subset.to_csv(index=False),
+                    file_name=f"featurized_{_cls.lower()}_{_feat_ts}.csv",
+                    mime="text/csv",
+                    key=f"dl_feat_{_cls}",
+                )
+
+            with st.expander("View by activity class"):
+                _tab_names = ["All"] + _present_classes
+                _tabs = st.tabs(_tab_names)
+                with _tabs[0]:
+                    st.write(f"{len(feature_df)} molecules")
+                    st.dataframe(feature_df.head(10))
+                for _ti, _cls in enumerate(_present_classes):
+                    with _tabs[_ti + 1]:
+                        _sub = _feat_df_with_label[
+                            _feat_df_with_label["_Activity_Label"] == _cls
+                        ].drop(columns=["_Activity_Label"])
+                        st.write(f"{len(_sub)} molecules")
+                        st.dataframe(_sub.head(10))
 
 st.divider()
 
