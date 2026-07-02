@@ -130,6 +130,32 @@ def build_metadata_block(settings):
     lines.append('# ================================')
     return chr(10).join(lines) + chr(10)
 
+st.markdown(
+    """<style>
+    /* ── Feature tab bar styling ── */
+    div[data-testid="stTabs"] > div[role="tablist"] {
+        background: linear-gradient(180deg, rgba(240,242,246,0.6) 0%, rgba(240,242,246,0) 100%);
+        border-bottom: 2px solid #e0e0e0;
+        gap: 0;
+    }
+    div[data-testid="stTabs"] > div[role="tablist"] > button {
+        flex: 1 1 0;
+        font-size: 1.2rem;
+        padding: 12px 24px;
+        font-weight: 500;
+        border-bottom: 3px solid transparent;
+        transition: border-color 0.2s, font-weight 0.2s;
+    }
+    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] {
+        font-weight: 700;
+        border-bottom: 3px solid #ff4b4b;
+    }
+    </style>""",
+    unsafe_allow_html=True,
+)
+
+st.sidebar.markdown("### 📚 Documentation")
+
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
