@@ -367,6 +367,140 @@ def compute_synthetic_accessibility(mol):
         return None, f"SA score computation failed: {str(e)}"
 
 
+def clean_dataset(df, smiles_column):
+    """
+    Clean a bioactivity dataset by removing invalid rows and cross-filling
+    pchembl_value / standard_value where possible.
+
+    Parameters:
+        df (pd.DataFrame): input DataFrame
+        smiles_column (str): name of the column containing SMILES strings
+
+    Returns:
+        tuple: (cleaned_df, report)
+            cleaned_df (pd.DataFrame): cleaned copy of df (original is not modified)
+            report (dict): cleaning summary with keys:
+                - rows_before (int)
+                - missing_smiles_removed (int), missing_smiles_rows (list of int)
+                - invalid_smiles_removed (int), invalid_smiles_rows (list of dicts)
+                - pchembl_computed (int), pchembl_computed_rows (list of int)
+                - stdval_computed (int), stdval_computed_rows (list of int)
+                - inconsistent_count (int), inconsistent_rows (list of dicts)
+                - both_missing_count (int), both_missing_rows (list of int)
+                - rows_after (int)
+    """
+    import math
+    import pandas as _pd
+
+    df = df.copy()
+    report = {}
+    report["rows_before"] = len(df)
+
+    # Step 1: Remove rows with missing/empty SMILES
+    _missing_mask = df[smiles_column].isna() | (df[smiles_column].astype(str).str.strip() == "")
+    _missing_indices = df[_missing_mask].index.tolist()
+    report["missing_smiles_removed"] = len(_missing_indices)
+    report["missing_smiles_rows"] = _missing_indices
+    df = df[~_missing_mask].reset_index(drop=True)
+
+    # Step 2: Remove rows where SMILES fails to parse
+    _invalid = []
+    _valid_mask = []
+    for i, smi in enumerate(df[smiles_column]):
+        mol = Chem.MolFromSmiles(str(smi))
+        if mol is None:
+            _invalid.append({"row": i, "smiles": str(smi)})
+            _valid_mask.append(False)
+        else:
+            _valid_mask.append(True)
+    report["invalid_smiles_removed"] = len(_invalid)
+    report["invalid_smiles_rows"] = _invalid
+    df = df[_valid_mask].reset_index(drop=True)
+
+    # Step 3: Cross-fill pchembl_value <-> standard_value
+    _has_pchembl = "pchembl_value" in df.columns
+    _has_stdval = "standard_value" in df.columns
+
+    report["pchembl_computed"] = 0
+    report["pchembl_computed_rows"] = []
+    report["stdval_computed"] = 0
+    report["stdval_computed_rows"] = []
+    report["inconsistent_count"] = 0
+    report["inconsistent_rows"] = []
+    report["both_missing_count"] = 0
+    report["both_missing_rows"] = []
+
+    if _has_pchembl and _has_stdval:
+        for i in range(len(df)):
+            _pv = df.at[df.index[i], "pchembl_value"]
+            _sv = df.at[df.index[i], "standard_value"]
+            _pv_valid = _pv == _pv and _pv is not None  # not NaN
+            _sv_valid = _sv == _sv and _sv is not None
+
+            if _pv_valid and _sv_valid:
+                # Both present — check consistency
+                try:
+                    _sv_f = float(_sv)
+                    _pv_f = float(_pv)
+                    if _sv_f > 0:
+                        _expected = 9.0 - math.log10(_sv_f)
+                        if abs(_pv_f - _expected) > 0.1:
+                            report["inconsistent_count"] += 1
+                            report["inconsistent_rows"].append({
+                                "row": i,
+                                "pchembl_value": round(_pv_f, 3),
+                                "standard_value": round(_sv_f, 3),
+                                "expected_pchembl": round(_expected, 3),
+                                "difference": round(abs(_pv_f - _expected), 3),
+                            })
+                except (ValueError, TypeError):
+                    pass
+            elif _pv_valid and not _sv_valid:
+                # pchembl present, standard_value missing → back-compute
+                try:
+                    _pv_f = float(_pv)
+                    _computed_sv = round(10 ** (9.0 - _pv_f), 3)
+                    df.at[df.index[i], "standard_value"] = _computed_sv
+                    report["stdval_computed"] += 1
+                    report["stdval_computed_rows"].append(i)
+                except (ValueError, TypeError):
+                    pass
+            elif not _pv_valid and _sv_valid:
+                # standard_value present, pchembl missing → compute pchembl
+                try:
+                    _sv_f = float(_sv)
+                    if _sv_f > 0:
+                        df.at[df.index[i], "pchembl_value"] = round(
+                            9.0 - math.log10(_sv_f), 3
+                        )
+                        report["pchembl_computed"] += 1
+                        report["pchembl_computed_rows"].append(i)
+                except (ValueError, TypeError):
+                    pass
+            else:
+                # Both missing
+                report["both_missing_count"] += 1
+                report["both_missing_rows"].append(i)
+    elif not _has_pchembl and _has_stdval:
+        # Create pchembl_value column entirely from standard_value
+        _pvals = []
+        for i, _sv in enumerate(df["standard_value"]):
+            try:
+                _sv_f = float(_sv)
+                if _sv_f > 0:
+                    _pvals.append(round(9.0 - math.log10(_sv_f), 3))
+                    report["pchembl_computed"] += 1
+                    report["pchembl_computed_rows"].append(i)
+                else:
+                    _pvals.append(None)
+            except (ValueError, TypeError):
+                _pvals.append(None)
+        df["pchembl_value"] = _pvals
+
+    report["rows_after"] = len(df)
+    return df, report
+
+
 def label_activity(
     df,
     activity_column,

@@ -5,7 +5,7 @@ st.set_page_config(page_title="QSAR Preprocessing Tool", page_icon="🧪", layou
 import pandas as pd
 from datetime import datetime
 from rdkit import rdBase, Chem
-from pipeline.preprocessing import run_preprocessing_pipeline, label_activity
+from pipeline.preprocessing import run_preprocessing_pipeline, label_activity, clean_dataset
 from pipeline.featurization import featurize_dataset, compute_descriptors
 import altair as alt
 from pipeline.visualization import mol_to_base64_png
@@ -174,9 +174,50 @@ if uploaded_file is not None:
 # ── Data Quality Summary (CSV/XLSX only) ──────────────────────────────────────
 _pchembl_fill_map = {}
 
-if _uploaded_df is not None:
-    import math as _math
 
+def _build_missing_data_html(df, smiles_col):
+    """Build an HTML table showing missing-data stats for key columns."""
+    _key_cols = [c for c in [smiles_col, "standard_value", "pchembl_value", "value"]
+                 if c and c in df.columns]
+    if not _key_cols:
+        return None
+    _rows = []
+    for _col in _key_cols:
+        _total = len(df)
+        _miss = int(df[_col].isna().sum())
+        _pct = (_miss / _total * 100) if _total else 0
+        _complete_pct = 100 - _pct
+        _bar = (
+            f"<div style='background:#e0e0e0;border-radius:4px;height:14px;"
+            f"width:120px;display:inline-block;overflow:hidden'>"
+            f"<div style='background:#2ca02c;height:100%;"
+            f"width:{_complete_pct:.0f}%'></div></div>"
+        )
+        _rows.append({
+            "Column": _col, "Total": _total, "Missing": _miss,
+            "Missing %": f"{_pct:.1f}%", "Completeness": _bar,
+        })
+    _headers = ["Column", "Total", "Missing", "Missing %", "Completeness"]
+    _html = (
+        "<table style='border-collapse:collapse;width:100%'>"
+        "<thead><tr style='background:#f5f5f5'>"
+        + "".join(
+            f"<th style='padding:6px 10px;text-align:left;"
+            f"border-bottom:1px solid #ddd'>{h}</th>" for h in _headers
+        )
+        + "</tr></thead><tbody>"
+    )
+    for _r in _rows:
+        _html += (
+            "<tr style='border-bottom:1px solid #eee'>"
+            + "".join(f"<td style='padding:6px 10px'>{_r[h]}</td>" for h in _headers)
+            + "</tr>"
+        )
+    _html += "</tbody></table>"
+    return _html
+
+
+if _uploaded_df is not None:
     with st.expander("Data Quality Summary", expanded=True):
         _n_rows, _n_cols = _uploaded_df.shape
         _numeric_cols_all = list(
@@ -199,162 +240,116 @@ if _uploaded_df is not None:
 
         st.divider()
 
-        # ── Missing data table ──
+        # ── Missing data table (before cleaning) ──
         st.subheader("Missing data")
-        _key_cols = [c for c in [_uploaded_smiles_col, "standard_value",
-                                  "pchembl_value", "value"]
-                     if c and c in _uploaded_df.columns]
-        if _key_cols:
-            _miss_rows = []
-            for _col in _key_cols:
-                _total = len(_uploaded_df)
-                _miss = int(_uploaded_df[_col].isna().sum())
-                _pct = (_miss / _total * 100) if _total else 0
-                _complete_pct = 100 - _pct
-                _bar_html = (
-                    f"<div style='background:#e0e0e0;border-radius:4px;height:14px;"
-                    f"width:120px;display:inline-block;overflow:hidden'>"
-                    f"<div style='background:#2ca02c;height:100%;"
-                    f"width:{_complete_pct:.0f}%'></div></div>"
-                )
-                _miss_rows.append({
-                    "Column": _col,
-                    "Total": _total,
-                    "Missing": _miss,
-                    "Missing %": f"{_pct:.1f}%",
-                    "Completeness": _bar_html,
-                })
-            _miss_html = (
-                "<table style='border-collapse:collapse;width:100%'>"
-                "<thead><tr style='background:#f5f5f5'>"
-                + "".join(
-                    f"<th style='padding:6px 10px;text-align:left;"
-                    f"border-bottom:1px solid #ddd'>{k}</th>"
-                    for k in ["Column", "Total", "Missing", "Missing %", "Completeness"]
-                )
-                + "</tr></thead><tbody>"
-            )
-            for _mr in _miss_rows:
-                _miss_html += (
-                    "<tr style='border-bottom:1px solid #eee'>"
-                    + "".join(
-                        f"<td style='padding:6px 10px'>{_mr[k]}</td>"
-                        for k in ["Column", "Total", "Missing", "Missing %", "Completeness"]
-                    )
-                    + "</tr>"
-                )
-            _miss_html += "</tbody></table>"
+        _miss_html = _build_missing_data_html(_uploaded_df, _uploaded_smiles_col)
+        if _miss_html:
             st.markdown(_miss_html, unsafe_allow_html=True)
         else:
             st.info("No key columns found to display missing-data statistics.")
 
         st.divider()
 
-        # ── Invalid SMILES ──
-        st.subheader("SMILES validity")
-        if _uploaded_smiles_col:
-            _smi_series = _uploaded_df[_uploaded_smiles_col].astype(str)
-            _parse_results = [
-                (i, s, Chem.MolFromSmiles(s) is not None)
-                for i, s in enumerate(_smi_series)
-            ]
-            _n_valid = sum(1 for *_, ok in _parse_results if ok)
-            _n_invalid = len(_parse_results) - _n_valid
-            if _n_invalid == 0:
-                st.success(f"All {_n_valid:,} SMILES parsed successfully.")
-            else:
-                st.warning(
-                    f"{_n_valid:,} of {len(_parse_results):,} SMILES are valid "
-                    f"(**{_n_invalid:,}** failed to parse)."
+        # ── Clean Dataset ──
+        st.subheader("Clean Dataset")
+        st.write(
+            "Remove rows with missing or invalid SMILES, and cross-fill "
+            "`pchembl_value` / `standard_value` where possible."
+        )
+
+        _cleaning_key = "cleaning_report"
+        _cleaned_key = "cleaned_df"
+
+        if st.button("Clean Dataset", key="btn_clean_dataset", type="primary"):
+            _cleaned, _report = clean_dataset(
+                _uploaded_df, _uploaded_smiles_col,
+            )
+            st.session_state[_cleaning_key] = _report
+            st.session_state[_cleaned_key] = _cleaned
+
+        if _cleaning_key in st.session_state:
+            _report = st.session_state[_cleaning_key]
+            _uploaded_df = st.session_state[_cleaned_key]
+
+            # Summary metrics
+            _m1, _m2, _m3 = st.columns(3)
+            _m1.metric("Rows before", f"{_report['rows_before']:,}")
+            _m2.metric(
+                "Rows removed",
+                f"{_report['missing_smiles_removed'] + _report['invalid_smiles_removed']:,}",
+            )
+            _m3.metric("Rows after", f"{_report['rows_after']:,}")
+
+            # Detailed results
+            _details = []
+            if _report["missing_smiles_removed"]:
+                _details.append(
+                    f"Rows removed (missing/empty SMILES): **{_report['missing_smiles_removed']}**"
                 )
-                with st.expander(f"View {_n_invalid:,} invalid SMILES"):
-                    _bad_rows = [
-                        {"Row": i + 1, "SMILES": s}
-                        for i, s, ok in _parse_results if not ok
-                    ]
-                    st.dataframe(pd.DataFrame(_bad_rows), hide_index=True)
-        else:
-            st.info("No SMILES column detected.")
-
-        st.divider()
-
-        # ── pchembl_value computation ──
-        st.subheader("pchembl_value auto-fill")
-        _has_pchembl = "pchembl_value" in _uploaded_df.columns
-        _has_stdval = "standard_value" in _uploaded_df.columns
-
-        if _has_pchembl and _has_stdval:
-            _pchembl_missing_mask = _uploaded_df["pchembl_value"].isna()
-            _n_pchembl_missing = int(_pchembl_missing_mask.sum())
-            _n_pchembl_total = len(_uploaded_df)
-            if _n_pchembl_missing == 0:
-                st.success("All pchembl_value entries are present — nothing to compute.")
-            else:
-                st.write(
-                    f"**{_n_pchembl_missing}** of {_n_pchembl_total} "
-                    f"pchembl_value entries are missing."
+            if _report["invalid_smiles_removed"]:
+                _details.append(
+                    f"Rows removed (unparseable SMILES): **{_report['invalid_smiles_removed']}**"
                 )
-                if st.button("Compute missing pchembl_value from standard_value",
-                             key="btn_fill_pchembl"):
-                    _uploaded_df = _uploaded_df.copy()
-                    _n_computed = 0
-                    for _idx in _uploaded_df[_pchembl_missing_mask].index:
-                        _sv = _uploaded_df.at[_idx, "standard_value"]
-                        try:
-                            _sv_f = float(_sv)
-                            if _sv_f > 0:
-                                _uploaded_df.at[_idx, "pchembl_value"] = round(
-                                    9.0 - _math.log10(_sv_f), 3
-                                )
-                                _n_computed += 1
-                        except (ValueError, TypeError):
-                            pass
-                    st.success(
-                        f"Computed **{_n_computed}** values using "
-                        f"`pchembl = 9 − log₁₀(standard_value)`."
+            if _report["pchembl_computed"]:
+                _details.append(
+                    f"pchembl_value computed from standard_value: "
+                    f"**{_report['pchembl_computed']}** "
+                    f"(`pchembl = 9 - log`_`10`_`(standard_value)`)"
+                )
+            if _report["stdval_computed"]:
+                _details.append(
+                    f"standard_value computed from pchembl_value: "
+                    f"**{_report['stdval_computed']}** "
+                    f"(`standard_value = 10^(9 - pchembl)`)"
+                )
+            if _report["inconsistent_count"]:
+                _details.append(
+                    f"Inconsistent value pairs flagged: "
+                    f"**{_report['inconsistent_count']}** "
+                    f"(|pchembl - expected| > 0.1)"
+                )
+            if _report["both_missing_count"]:
+                _details.append(
+                    f"Rows with both values missing: **{_report['both_missing_count']}**"
+                )
+            if not _details:
+                _details.append("No issues found — dataset is already clean.")
+
+            for _d in _details:
+                st.markdown(f"- {_d}")
+
+            # Expandable detail sections
+            if _report["invalid_smiles_removed"]:
+                with st.expander(
+                    f"View {_report['invalid_smiles_removed']} removed invalid SMILES"
+                ):
+                    st.dataframe(
+                        pd.DataFrame(_report["invalid_smiles_rows"]),
+                        hide_index=True,
                     )
-                    if _n_computed < _n_pchembl_missing:
-                        st.caption(
-                            f"{_n_pchembl_missing - _n_computed} could not be computed "
-                            f"(missing or non-positive standard_value)."
-                        )
-        elif not _has_pchembl and _has_stdval:
-            st.write(
-                "No `pchembl_value` column found, but `standard_value` is available."
-            )
-            if st.button("Create pchembl_value from standard_value",
-                         key="btn_create_pchembl"):
-                _uploaded_df = _uploaded_df.copy()
-                _pvals = []
-                _n_computed = 0
-                for _sv in _uploaded_df["standard_value"]:
-                    try:
-                        _sv_f = float(_sv)
-                        if _sv_f > 0:
-                            _pvals.append(round(9.0 - _math.log10(_sv_f), 3))
-                            _n_computed += 1
-                        else:
-                            _pvals.append(None)
-                    except (ValueError, TypeError):
-                        _pvals.append(None)
-                _uploaded_df["pchembl_value"] = _pvals
-                st.success(
-                    f"Created `pchembl_value` column with **{_n_computed}** "
-                    f"values using `pchembl = 9 − log₁₀(standard_value)`."
-                )
-        elif _has_pchembl and not _has_stdval:
-            _n_present = int(_uploaded_df["pchembl_value"].notna().sum())
-            st.write(
-                f"`pchembl_value` column found ({_n_present} of {len(_uploaded_df)} "
-                f"present). No `standard_value` column available for auto-fill."
-            )
-        else:
-            st.info(
-                "Neither `pchembl_value` nor `standard_value` columns found. "
-                "Activity labeling will use whichever numeric column you select."
-            )
+            if _report["inconsistent_count"]:
+                with st.expander(
+                    f"View {_report['inconsistent_count']} inconsistent value pairs"
+                ):
+                    st.dataframe(
+                        pd.DataFrame(_report["inconsistent_rows"]),
+                        hide_index=True,
+                    )
 
-        # Build canonical SMILES → pchembl map for downstream use
+            # Updated missing data table (after cleaning)
+            st.divider()
+            st.subheader("Missing data (after cleaning)")
+            _miss_html_after = _build_missing_data_html(
+                _uploaded_df, _uploaded_smiles_col
+            )
+            if _miss_html_after:
+                st.markdown(_miss_html_after, unsafe_allow_html=True)
+            else:
+                st.info("No key columns found.")
+
+            st.success("Cleaned dataset is now used for all downstream steps.")
+
+        # Build canonical SMILES -> pchembl map for downstream use
         if "pchembl_value" in _uploaded_df.columns and _uploaded_smiles_col:
             for _, _row in _uploaded_df.iterrows():
                 _pv = _row.get("pchembl_value")
