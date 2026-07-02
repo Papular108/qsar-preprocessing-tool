@@ -685,26 +685,49 @@ if st.button("Run Pipeline"):
             "input_count": len(smiles_list),
             "kept_count": len(result["kept_smiles"]),
         }
+        # Store serializable pipeline results for persistent display
+        st.session_state["pipeline_result"] = {
+            "kept_smiles": result["kept_smiles"],
+            "audit_trail": result["audit_trail"],
+            "removed_log": result["removed_log"],
+            "sa_scores": result["sa_scores"],
+            "qed_scores": result["qed_scores"],
+            "input_count": len(smiles_list),
+        }
+        st.session_state["pipeline_ts"] = _ts
+        # Snapshot label maps at pipeline run time
+        st.session_state["pipeline_label_map"] = dict(_activity_label_map)
+        st.session_state["pipeline_pval_map"] = dict(_activity_pval_map)
+        st.session_state["pipeline_pchembl_map"] = dict(_pchembl_fill_map)
 
-        st.subheader("Results")
-        st.write(f"Input molecules: {len(smiles_list)}")
-        st.write(f"Kept after preprocessing: {len(result['kept_smiles'])}")
+# ── Display pipeline results (persistent) ────────────────────────────────────
+if "pipeline_result" in st.session_state:
+    result = st.session_state["pipeline_result"]
+    _ts = st.session_state["pipeline_ts"]
+    _pl_label_map = st.session_state.get("pipeline_label_map", {})
+    _pl_pval_map = st.session_state.get("pipeline_pval_map", {})
+    _pl_pchembl_map = st.session_state.get("pipeline_pchembl_map", {})
 
-        st.subheader("Audit Trail")
-        audit_df = pd.DataFrame(result["audit_trail"])
-        st.dataframe(audit_df)
+    st.subheader("Results")
+    st.write(f"Input molecules: {result['input_count']}")
+    st.write(f"Kept after preprocessing: {len(result['kept_smiles'])}")
 
-        # Activity class breakdown (only if user did activity labeling)
-        if _activity_label_map:
-            st.subheader("Activity Class Breakdown")
-            _kept_labels = [_activity_label_map.get(s) for s in result["kept_smiles"]]
-            _removed_labels = [
-                _activity_label_map.get(r["smiles"]) for r in result["removed_log"]
-            ]
-            _class_names = ["Active", "Intermediate", "Inactive"]
-            _active_classes = [c for c in _class_names
-                               if c in _kept_labels or c in _removed_labels]
+    st.subheader("Audit Trail")
+    audit_df = pd.DataFrame(result["audit_trail"])
+    st.dataframe(audit_df)
 
+    # Activity class breakdown (only if user did activity labeling)
+    if _pl_label_map:
+        st.subheader("Activity Class Breakdown")
+        _kept_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+        _removed_labels = [
+            _pl_label_map.get(r["smiles"]) for r in result["removed_log"]
+        ]
+        _class_names = ["Active", "Intermediate", "Inactive"]
+        _active_classes = [c for c in _class_names
+                           if c in _kept_labels or c in _removed_labels]
+
+        if _active_classes:
             _kept_cols = st.columns(len(_active_classes))
             for _ci, _cls in enumerate(_active_classes):
                 _n_kept = _kept_labels.count(_cls)
@@ -715,191 +738,192 @@ if st.button("Run Pipeline"):
                     delta=f"{_n_removed} removed" if _n_removed else None,
                     delta_color="off",
                 )
-            _n_unlabeled_kept = sum(1 for l in _kept_labels if l is None)
-            _n_unlabeled_removed = sum(1 for l in _removed_labels if l is None)
-            if _n_unlabeled_kept or _n_unlabeled_removed:
-                st.caption(
-                    f"{_n_unlabeled_kept + _n_unlabeled_removed} molecules had no "
-                    f"activity label ({_n_unlabeled_kept} kept, "
-                    f"{_n_unlabeled_removed} removed)."
-                )
-
-        if result["removed_log"]:
-            st.subheader("Removed Molecules")
-            st.write(f"{len(result['removed_log'])} molecules removed across all steps")
-            removed_df = pd.DataFrame(result["removed_log"])[["original_index", "smiles", "step", "reason"]]
-            st.download_button(
-                "Download removed molecules as CSV",
-                data=removed_df.to_csv(index=False),
-                file_name=f"removed_molecules_{_ts}.csv",
-                mime="text/csv",
+        _n_unlabeled_kept = sum(1 for l in _kept_labels if l is None)
+        _n_unlabeled_removed = sum(1 for l in _removed_labels if l is None)
+        if _n_unlabeled_kept or _n_unlabeled_removed:
+            st.caption(
+                f"{_n_unlabeled_kept + _n_unlabeled_removed} molecules had no "
+                f"activity label ({_n_unlabeled_kept} kept, "
+                f"{_n_unlabeled_removed} removed)."
             )
-            with st.expander("View removed molecules"):
-                st.dataframe(removed_df, use_container_width=True)
 
-        st.subheader("Kept Molecules")
-        kept_data = {"SMILES": result["kept_smiles"]}
-        if result["sa_scores"] is not None:
-            kept_data["SA_Score"] = result["sa_scores"]
+    if result["removed_log"]:
+        st.subheader("Removed Molecules")
+        st.write(f"{len(result['removed_log'])} molecules removed across all steps")
+        removed_df = pd.DataFrame(result["removed_log"])[["original_index", "smiles", "step", "reason"]]
+        st.download_button(
+            "Download removed molecules as CSV",
+            data=removed_df.to_csv(index=False),
+            file_name=f"removed_molecules_{_ts}.csv",
+            mime="text/csv",
+        )
+        with st.expander("View removed molecules"):
+            st.dataframe(removed_df, use_container_width=True)
+
+    st.subheader("Kept Molecules")
+    kept_data = {"SMILES": result["kept_smiles"]}
+    if result["sa_scores"] is not None:
+        kept_data["SA_Score"] = result["sa_scores"]
+    if result["qed_scores"] is not None:
+        kept_data["QED_Score"] = result["qed_scores"]
+    if _pl_label_map:
+        kept_data["Activity_Label"] = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+        kept_data["pActivity"] = [_pl_pval_map.get(s) for s in result["kept_smiles"]]
+    if _pl_pchembl_map:
+        kept_data["pchembl_value"] = [_pl_pchembl_map.get(s) for s in result["kept_smiles"]]
+    kept_df = pd.DataFrame(kept_data)
+    extra_kept = [c for c in ["SA_Score", "QED_Score", "Activity_Label", "pActivity", "pchembl_value"] if c in kept_df.columns]
+
+    _pl_settings = st.session_state.get("pipeline_settings", {})
+    metadata = build_metadata_block({
+        "Lipinski max violations": _pl_settings.get("lipinski_max_violations", ""),
+        "Veber filter": _pl_settings.get("enable_veber", ""),
+        "Ghose filter": _pl_settings.get("enable_ghose", ""),
+        "Egan filter": _pl_settings.get("enable_egan", ""),
+        "Muegge filter": _pl_settings.get("enable_muegge", ""),
+        "Brenk filter": _pl_settings.get("enable_brenk", ""),
+        "SA score reported": _pl_settings.get("enable_sa_score", ""),
+        "QED score reported": _pl_settings.get("enable_qed", ""),
+        "Input molecule count": result["input_count"],
+        "Kept molecule count": len(result["kept_smiles"]),
+    })
+    csv_data = metadata + kept_df.to_csv(index=False)
+
+    st.write(f"{len(kept_df)} molecules kept after preprocessing")
+    st.download_button("Download kept molecules as CSV", data=csv_data, file_name=f"kept_molecules_{_ts}.csv", mime="text/csv")
+    with st.expander("View kept molecules (first 20)"):
+        preview_records = kept_df.head(20).to_dict("records")
+        st.markdown(
+            _mol_table_html(preview_records, "SMILES", extra_kept),
+            unsafe_allow_html=True,
+        )
+
+    st.subheader("Descriptor Distributions")
+    if len(result["kept_smiles"]) < 2:
+        st.info("At least 2 kept molecules are needed to show distributions.")
+    else:
+        desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
         if result["qed_scores"] is not None:
-            kept_data["QED_Score"] = result["qed_scores"]
-        if _activity_label_map:
-            kept_data["Activity_Label"] = [_activity_label_map.get(s) for s in result["kept_smiles"]]
-            kept_data["pActivity"] = [_activity_pval_map.get(s) for s in result["kept_smiles"]]
-        if _pchembl_fill_map:
-            kept_data["pchembl_value"] = [_pchembl_fill_map.get(s) for s in result["kept_smiles"]]
-        kept_df = pd.DataFrame(kept_data)
-        extra_kept = [c for c in ["SA_Score", "QED_Score", "Activity_Label", "pActivity", "pchembl_value"] if c in kept_df.columns]
-
-        metadata = build_metadata_block({
-            "Lipinski max violations": max_violations,
-            "Veber filter": enable_veber,
-            "Ghose filter": enable_ghose,
-            "Egan filter": enable_egan,
-            "Muegge filter": enable_muegge,
-            "Brenk filter": enable_brenk,
-            "SA score reported": enable_sa_score,
-            "QED score reported": enable_qed,
-            "Input molecule count": len(smiles_list),
-            "Kept molecule count": len(result["kept_smiles"]),
-        })
-        csv_data = metadata + kept_df.to_csv(index=False)
-
-        st.write(f"{len(kept_df)} molecules kept after preprocessing")
-        st.download_button("Download kept molecules as CSV", data=csv_data, file_name=f"kept_molecules_{_ts}.csv", mime="text/csv")
-        with st.expander("View kept molecules (first 20)"):
-            preview_records = kept_df.head(20).to_dict("records")
-            st.markdown(
-                _mol_table_html(preview_records, "SMILES", extra_kept),
-                unsafe_allow_html=True,
-            )
-
-        st.subheader("Descriptor Distributions")
-        if len(result["kept_smiles"]) < 2:
-            st.info("At least 2 kept molecules are needed to show distributions.")
-        else:
-            desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
-            if result["qed_scores"] is not None:
-                desc_df["QED"] = result["qed_scores"]
-            st.caption(
-                "Physicochemical property distributions for the kept molecules. "
-                "Hover over bars for exact counts."
-            )
-            _DIST_FIELDS = [
-                ("MW",             "Molecular Weight (Da)"),
-                ("LogP",           "LogP"),
-                ("TPSA",           "TPSA (Å²)"),
-                ("HBD",            "H-bond Donors"),
-                ("HBA",            "H-bond Acceptors"),
-                ("RotatableBonds", "Rotatable Bonds"),
-            ]
-            if result["qed_scores"] is not None:
-                _DIST_FIELDS.append(("QED", "QED Score (0–1)"))
-            _grid_rows = [st.columns(3) for _ in range((len(_DIST_FIELDS) + 2) // 3)]
-            for i, (field, label) in enumerate(_DIST_FIELDS):
-                with _grid_rows[i // 3][i % 3]:
-                    chart = (
-                        alt.Chart(desc_df)
-                        .mark_bar(color="#4C72B0")
-                        .encode(
-                            alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
-                            alt.Y("count()", title="Count"),
-                            tooltip=[
-                                alt.Tooltip(f"{field}:Q", bin=True, title=label),
-                                alt.Tooltip("count()", title="Count"),
-                            ],
-                        )
-                        .properties(height=180)
+            desc_df["QED"] = result["qed_scores"]
+        st.caption(
+            "Physicochemical property distributions for the kept molecules. "
+            "Hover over bars for exact counts."
+        )
+        _DIST_FIELDS = [
+            ("MW",             "Molecular Weight (Da)"),
+            ("LogP",           "LogP"),
+            ("TPSA",           "TPSA (Å²)"),
+            ("HBD",            "H-bond Donors"),
+            ("HBA",            "H-bond Acceptors"),
+            ("RotatableBonds", "Rotatable Bonds"),
+        ]
+        if result["qed_scores"] is not None:
+            _DIST_FIELDS.append(("QED", "QED Score (0–1)"))
+        _grid_rows = [st.columns(3) for _ in range((len(_DIST_FIELDS) + 2) // 3)]
+        for i, (field, label) in enumerate(_DIST_FIELDS):
+            with _grid_rows[i // 3][i % 3]:
+                chart = (
+                    alt.Chart(desc_df)
+                    .mark_bar(color="#4C72B0")
+                    .encode(
+                        alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
+                        alt.Y("count()", title="Count"),
+                        tooltip=[
+                            alt.Tooltip(f"{field}:Q", bin=True, title=label),
+                            alt.Tooltip("count()", title="Count"),
+                        ],
                     )
-                    st.altair_chart(chart, use_container_width=True)
-
-        if len(result["kept_smiles"]) >= 5:
-            st.subheader("Descriptor Correlations")
-            _sa_tuple = tuple(result["sa_scores"]) if result["sa_scores"] is not None else None
-            _qed_tuple = tuple(result["qed_scores"]) if result["qed_scores"] is not None else None
-            corr_long = _cached_corr_matrix(tuple(result["kept_smiles"]), _sa_tuple, _qed_tuple)
-
-            corr_rect = (
-                alt.Chart(corr_long)
-                .mark_rect()
-                .encode(
-                    x=alt.X("descriptor_x:N", title=None, sort=None),
-                    y=alt.Y("descriptor_y:N", title=None, sort=None),
-                    color=alt.Color(
-                        "correlation:Q",
-                        scale=alt.Scale(domain=[-1, 0, 1], range=["#d73027", "#ffffff", "#4575b4"]),
-                        legend=alt.Legend(title="Pearson r"),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("descriptor_x:N", title="Descriptor X"),
-                        alt.Tooltip("descriptor_y:N", title="Descriptor Y"),
-                        alt.Tooltip("correlation:Q", title="Pearson r", format=".2f"),
-                    ],
+                    .properties(height=180)
                 )
-            )
-            corr_text = (
-                alt.Chart(corr_long)
-                .mark_text(fontSize=11)
-                .encode(
-                    x=alt.X("descriptor_x:N", sort=None),
-                    y=alt.Y("descriptor_y:N", sort=None),
-                    text=alt.Text("correlation:Q", format=".2f"),
-                    color=alt.condition(
-                        "abs(datum.correlation) > 0.6",
-                        alt.value("white"),
-                        alt.value("#333333"),
-                    ),
-                )
-            )
-            st.altair_chart((corr_rect + corr_text).properties(height=350), use_container_width=True)
-            st.caption(
-                "This heatmap shows Pearson correlations between physicochemical descriptors. "
-                "Strong correlations (close to +1 or -1) indicate redundant features — consider removing "
-                "one of a highly correlated pair before training ML models to reduce multicollinearity."
-            )
+                st.altair_chart(chart, use_container_width=True)
 
-        if len(result["kept_smiles"]) >= 5:
-            st.subheader("Chemical Space Visualization")
-            pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
-            color_scale = alt.Scale(
-                domain=["Your molecules", "FDA-approved drugs"],
-                range=["#1f77b4", "#BBBBBB"],
+    if len(result["kept_smiles"]) >= 5:
+        st.subheader("Descriptor Correlations")
+        _sa_tuple = tuple(result["sa_scores"]) if result["sa_scores"] is not None else None
+        _qed_tuple = tuple(result["qed_scores"]) if result["qed_scores"] is not None else None
+        corr_long = _cached_corr_matrix(tuple(result["kept_smiles"]), _sa_tuple, _qed_tuple)
+
+        corr_rect = (
+            alt.Chart(corr_long)
+            .mark_rect()
+            .encode(
+                x=alt.X("descriptor_x:N", title=None, sort=None),
+                y=alt.Y("descriptor_y:N", title=None, sort=None),
+                color=alt.Color(
+                    "correlation:Q",
+                    scale=alt.Scale(domain=[-1, 0, 1], range=["#d73027", "#ffffff", "#4575b4"]),
+                    legend=alt.Legend(title="Pearson r"),
+                ),
+                tooltip=[
+                    alt.Tooltip("descriptor_x:N", title="Descriptor X"),
+                    alt.Tooltip("descriptor_y:N", title="Descriptor Y"),
+                    alt.Tooltip("correlation:Q", title="Pearson r", format=".2f"),
+                ],
             )
-            pca_chart = (
-                alt.Chart(pca_df)
-                .mark_circle()
-                .encode(
-                    x=alt.X("PC1:Q", title=pc1_label),
-                    y=alt.Y("PC2:Q", title=pc2_label),
-                    color=alt.Color("Group:N", scale=color_scale, legend=alt.Legend(title="Dataset")),
-                    opacity=alt.condition(
-                        alt.datum["Group"] == "Your molecules",
-                        alt.value(0.9),
-                        alt.value(0.35),
-                    ),
-                    size=alt.condition(
-                        alt.datum["Group"] == "Your molecules",
-                        alt.value(80),
-                        alt.value(40),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("SMILES:N"),
-                        alt.Tooltip("MW:Q", format=".1f"),
-                        alt.Tooltip("LogP:Q", format=".2f"),
-                        alt.Tooltip("TPSA:Q", format=".1f"),
-                        alt.Tooltip("HBD:Q"),
-                        alt.Tooltip("HBA:Q"),
-                        alt.Tooltip("Group:N"),
-                    ],
-                )
-                .properties(height=420)
+        )
+        corr_text = (
+            alt.Chart(corr_long)
+            .mark_text(fontSize=11)
+            .encode(
+                x=alt.X("descriptor_x:N", sort=None),
+                y=alt.Y("descriptor_y:N", sort=None),
+                text=alt.Text("correlation:Q", format=".2f"),
+                color=alt.condition(
+                    "abs(datum.correlation) > 0.6",
+                    alt.value("white"),
+                    alt.value("#333333"),
+                ),
             )
-            st.altair_chart(pca_chart, use_container_width=True)
-            st.caption(
-                "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
-                "Molecules closer together have more similar properties. "
-                "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+        )
+        st.altair_chart((corr_rect + corr_text).properties(height=350), use_container_width=True)
+        st.caption(
+            "This heatmap shows Pearson correlations between physicochemical descriptors. "
+            "Strong correlations (close to +1 or -1) indicate redundant features — consider removing "
+            "one of a highly correlated pair before training ML models to reduce multicollinearity."
+        )
+
+    if len(result["kept_smiles"]) >= 5:
+        st.subheader("Chemical Space Visualization")
+        pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
+        color_scale = alt.Scale(
+            domain=["Your molecules", "FDA-approved drugs"],
+            range=["#1f77b4", "#BBBBBB"],
+        )
+        pca_chart = (
+            alt.Chart(pca_df)
+            .mark_circle()
+            .encode(
+                x=alt.X("PC1:Q", title=pc1_label),
+                y=alt.Y("PC2:Q", title=pc2_label),
+                color=alt.Color("Group:N", scale=color_scale, legend=alt.Legend(title="Dataset")),
+                opacity=alt.condition(
+                    alt.datum["Group"] == "Your molecules",
+                    alt.value(0.9),
+                    alt.value(0.35),
+                ),
+                size=alt.condition(
+                    alt.datum["Group"] == "Your molecules",
+                    alt.value(80),
+                    alt.value(40),
+                ),
+                tooltip=[
+                    alt.Tooltip("SMILES:N"),
+                    alt.Tooltip("MW:Q", format=".1f"),
+                    alt.Tooltip("LogP:Q", format=".2f"),
+                    alt.Tooltip("TPSA:Q", format=".1f"),
+                    alt.Tooltip("HBD:Q"),
+                    alt.Tooltip("HBA:Q"),
+                    alt.Tooltip("Group:N"),
+                ],
             )
+            .properties(height=420)
+        )
+        st.altair_chart(pca_chart, use_container_width=True)
+        st.caption(
+            "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
+            "Molecules closer together have more similar properties. "
+            "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+        )
 
 
 st.divider()
@@ -946,70 +970,85 @@ if st.button("Run Featurization"):
                 radius=radius,
                 n_bits=n_bits,
             )
-        _feat_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.session_state["featurization_result"] = {
+            "feature_df": feature_df,
+            "feat_errors": feat_errors,
+            "fp_type": fp_type,
+            "n_bits": n_bits,
+            "radius": radius,
+            "ts": datetime.now().strftime("%Y%m%d_%H%M%S"),
+        }
 
-        st.subheader("Featurized Data")
-        st.write(f"Shape: {feature_df.shape}")
-        st.dataframe(feature_df.head(20))
+# ── Display featurization results (persistent) ───────────────────────────────
+if "featurization_result" in st.session_state:
+    _fr = st.session_state["featurization_result"]
+    feature_df = _fr["feature_df"]
+    feat_errors = _fr["feat_errors"]
+    _feat_ts = _fr["ts"]
 
-        if feat_errors:
-            st.warning(f"{len(feat_errors)} molecules failed featurization.")
-            st.dataframe(pd.DataFrame(feat_errors))
+    st.subheader("Featurized Data")
+    st.write(f"Shape: {feature_df.shape}")
+    st.dataframe(feature_df.head(20))
 
-        feat_metadata = build_metadata_block({
-            "Fingerprint type": fp_type,
-            "Fingerprint bits": n_bits,
-            "Morgan radius": radius,
-            "Molecule count": feature_df.shape[0],
-            "Feature column count": feature_df.shape[1],
-        })
-        csv_data = feat_metadata + feature_df.to_csv(index=False)
-        st.download_button(
-            "Download all featurized data as CSV",
-            data=csv_data,
-            file_name=f"featurized_data_{_feat_ts}.csv",
-            mime="text/csv",
-        )
+    if feat_errors:
+        st.warning(f"{len(feat_errors)} molecules failed featurization.")
+        st.dataframe(pd.DataFrame(feat_errors))
 
-        # Activity-aware downloads and preview
-        _feat_smiles = list(st.session_state["kept_smiles_for_featurization"])
-        _feat_labels = [_activity_label_map.get(s) for s in _feat_smiles]
-        _has_feat_labels = any(l is not None for l in _feat_labels)
+    feat_metadata = build_metadata_block({
+        "Fingerprint type": _fr["fp_type"],
+        "Fingerprint bits": _fr["n_bits"],
+        "Morgan radius": _fr["radius"],
+        "Molecule count": feature_df.shape[0],
+        "Feature column count": feature_df.shape[1],
+    })
+    csv_data = feat_metadata + feature_df.to_csv(index=False)
+    st.download_button(
+        "Download all featurized data as CSV",
+        data=csv_data,
+        file_name=f"featurized_data_{_feat_ts}.csv",
+        mime="text/csv",
+    )
 
-        if _has_feat_labels:
-            _feat_df_with_label = feature_df.copy()
-            _feat_df_with_label.insert(0, "_Activity_Label", _feat_labels)
+    # Activity-aware downloads and preview
+    _pl_label_map_feat = st.session_state.get("pipeline_label_map", {})
+    _feat_smiles = list(st.session_state.get("kept_smiles_for_featurization", []))
+    _feat_labels = [_pl_label_map_feat.get(s) for s in _feat_smiles]
+    _has_feat_labels = any(l is not None for l in _feat_labels)
 
-            _class_order = ["Active", "Intermediate", "Inactive"]
-            _present_classes = [c for c in _class_order if c in _feat_labels]
+    if _has_feat_labels:
+        _feat_df_with_label = feature_df.copy()
+        _feat_df_with_label.insert(0, "_Activity_Label", _feat_labels)
 
-            st.write("**Download by activity class:**")
-            _dl_cols = st.columns(len(_present_classes))
-            for _di, _cls in enumerate(_present_classes):
-                _subset = _feat_df_with_label[
-                    _feat_df_with_label["_Activity_Label"] == _cls
-                ].drop(columns=["_Activity_Label"])
-                _dl_cols[_di].download_button(
-                    f"Download {_cls} ({len(_subset)})",
-                    data=_subset.to_csv(index=False),
-                    file_name=f"featurized_{_cls.lower()}_{_feat_ts}.csv",
-                    mime="text/csv",
-                    key=f"dl_feat_{_cls}",
-                )
+        _class_order = ["Active", "Intermediate", "Inactive"]
+        _present_classes = [c for c in _class_order if c in _feat_labels]
 
-            with st.expander("View by activity class"):
-                _tab_names = ["All"] + _present_classes
-                _tabs = st.tabs(_tab_names)
-                with _tabs[0]:
-                    st.write(f"{len(feature_df)} molecules")
-                    st.dataframe(feature_df.head(10))
-                for _ti, _cls in enumerate(_present_classes):
-                    with _tabs[_ti + 1]:
-                        _sub = _feat_df_with_label[
-                            _feat_df_with_label["_Activity_Label"] == _cls
-                        ].drop(columns=["_Activity_Label"])
-                        st.write(f"{len(_sub)} molecules")
-                        st.dataframe(_sub.head(10))
+        st.write("**Download by activity class:**")
+        _dl_cols = st.columns(len(_present_classes))
+        for _di, _cls in enumerate(_present_classes):
+            _subset = _feat_df_with_label[
+                _feat_df_with_label["_Activity_Label"] == _cls
+            ].drop(columns=["_Activity_Label"])
+            _dl_cols[_di].download_button(
+                f"Download {_cls} ({len(_subset)})",
+                data=_subset.to_csv(index=False),
+                file_name=f"featurized_{_cls.lower()}_{_feat_ts}.csv",
+                mime="text/csv",
+                key=f"dl_feat_{_cls}",
+            )
+
+        with st.expander("View by activity class"):
+            _tab_names = ["All"] + _present_classes
+            _tabs = st.tabs(_tab_names)
+            with _tabs[0]:
+                st.write(f"{len(feature_df)} molecules")
+                st.dataframe(feature_df.head(10))
+            for _ti, _cls in enumerate(_present_classes):
+                with _tabs[_ti + 1]:
+                    _sub = _feat_df_with_label[
+                        _feat_df_with_label["_Activity_Label"] == _cls
+                    ].drop(columns=["_Activity_Label"])
+                    st.write(f"{len(_sub)} molecules")
+                    st.dataframe(_sub.head(10))
 
 st.divider()
 
@@ -1024,10 +1063,12 @@ if st.button("Generate Methods Section"):
         settings["fp_type"] = fp_type
         settings["n_bits"] = n_bits
         settings["radius"] = radius
-        methods_text = generate_methods_text(settings)
-        st.text_area(
-            "Methods paragraph (select all and copy)",
-            value=methods_text,
-            height=250,
-        )
-        st.caption("Tip: click inside the text box, then press Ctrl+A / Cmd+A to select all.")
+        st.session_state["methods_text"] = generate_methods_text(settings)
+
+if "methods_text" in st.session_state:
+    st.text_area(
+        "Methods paragraph (select all and copy)",
+        value=st.session_state["methods_text"],
+        height=250,
+    )
+    st.caption("Tip: click inside the text box, then press Ctrl+A / Cmd+A to select all.")
