@@ -805,6 +805,20 @@ if "pipeline_result" in st.session_state:
         desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
         if result["qed_scores"] is not None:
             desc_df["QED"] = result["qed_scores"]
+
+        # Add activity labels to descriptor df if available
+        _dist_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+        _dist_has_labels = _pl_label_map and any(l is not None for l in _dist_labels)
+        if _dist_has_labels:
+            desc_df["Activity_Class"] = _dist_labels
+            _dist_classes = [c for c in ["Active", "Intermediate", "Inactive"]
+                             if c in _dist_labels]
+            _dist_color_scale = alt.Scale(
+                domain=_dist_classes,
+                range=[{"Active": "#2ca02c", "Intermediate": "#ff7f0e",
+                        "Inactive": "#d62728"}[c] for c in _dist_classes],
+            )
+
         st.caption(
             "Physicochemical property distributions for the kept molecules. "
             "Hover over bars for exact counts."
@@ -822,19 +836,41 @@ if "pipeline_result" in st.session_state:
         _grid_rows = [st.columns(3) for _ in range((len(_DIST_FIELDS) + 2) // 3)]
         for i, (field, label) in enumerate(_DIST_FIELDS):
             with _grid_rows[i // 3][i % 3]:
-                chart = (
-                    alt.Chart(desc_df)
-                    .mark_bar(color="#4C72B0")
-                    .encode(
-                        alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
-                        alt.Y("count()", title="Count"),
-                        tooltip=[
-                            alt.Tooltip(f"{field}:Q", bin=True, title=label),
-                            alt.Tooltip("count()", title="Count"),
-                        ],
+                if _dist_has_labels:
+                    _desc_filtered = desc_df[desc_df["Activity_Class"].notna()]
+                    chart = (
+                        alt.Chart(_desc_filtered)
+                        .mark_bar(opacity=0.6)
+                        .encode(
+                            alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
+                            alt.Y("count()", title="Count", stack=None),
+                            color=alt.Color(
+                                "Activity_Class:N",
+                                scale=_dist_color_scale,
+                                legend=alt.Legend(title="Class"),
+                            ),
+                            tooltip=[
+                                alt.Tooltip(f"{field}:Q", bin=True, title=label),
+                                alt.Tooltip("count()", title="Count"),
+                                alt.Tooltip("Activity_Class:N", title="Class"),
+                            ],
+                        )
+                        .properties(height=180)
                     )
-                    .properties(height=180)
-                )
+                else:
+                    chart = (
+                        alt.Chart(desc_df)
+                        .mark_bar(color="#4C72B0")
+                        .encode(
+                            alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
+                            alt.Y("count()", title="Count"),
+                            tooltip=[
+                                alt.Tooltip(f"{field}:Q", bin=True, title=label),
+                                alt.Tooltip("count()", title="Count"),
+                            ],
+                        )
+                        .properties(height=180)
+                    )
                 st.altair_chart(chart, use_container_width=True)
 
     if len(result["kept_smiles"]) >= 5:
@@ -885,10 +921,37 @@ if "pipeline_result" in st.session_state:
     if len(result["kept_smiles"]) >= 5:
         st.subheader("Chemical Space Visualization")
         pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
-        color_scale = alt.Scale(
-            domain=["Your molecules", "FDA-approved drugs"],
-            range=["#1f77b4", "#BBBBBB"],
-        )
+
+        # Assign activity-class-aware groups when labels exist
+        _pca_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+        _pca_has_labels = _pl_label_map and any(l is not None for l in _pca_labels)
+
+        if _pca_has_labels:
+            # Replace generic "Your molecules" with specific class names
+            _pca_group_map = {}
+            for smi, lbl in zip(result["kept_smiles"], _pca_labels):
+                _pca_group_map[smi] = lbl if lbl else "Unlabeled"
+            pca_df = pca_df.copy()
+            pca_df["Group"] = pca_df.apply(
+                lambda r: _pca_group_map.get(r["SMILES"], r["Group"])
+                if r["Group"] == "Your molecules" else r["Group"],
+                axis=1,
+            )
+            _pca_classes = [c for c in ["Active", "Intermediate", "Inactive"]
+                            if c in pca_df["Group"].values]
+            _pca_domain = _pca_classes + ["FDA-approved drugs"]
+            _class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
+                             "Inactive": "#d62728"}
+            _pca_range = [_class_colors[c] for c in _pca_classes] + ["#DAA520"]
+            # FDA dots should be behind user molecules
+            _pca_order = ["FDA-approved drugs"] + _pca_classes
+        else:
+            _pca_domain = ["Your molecules", "FDA-approved drugs"]
+            _pca_range = ["#1f77b4", "#BBBBBB"]
+            _pca_order = ["FDA-approved drugs", "Your molecules"]
+
+        color_scale = alt.Scale(domain=_pca_domain, range=_pca_range)
+
         pca_chart = (
             alt.Chart(pca_df)
             .mark_circle()
@@ -897,15 +960,16 @@ if "pipeline_result" in st.session_state:
                 y=alt.Y("PC2:Q", title=pc2_label),
                 color=alt.Color("Group:N", scale=color_scale, legend=alt.Legend(title="Dataset")),
                 opacity=alt.condition(
-                    alt.datum["Group"] == "Your molecules",
-                    alt.value(0.9),
+                    alt.datum["Group"] == "FDA-approved drugs",
                     alt.value(0.35),
+                    alt.value(0.9),
                 ),
                 size=alt.condition(
-                    alt.datum["Group"] == "Your molecules",
-                    alt.value(80),
+                    alt.datum["Group"] == "FDA-approved drugs",
                     alt.value(40),
+                    alt.value(80),
                 ),
+                order=alt.Order("_sort:Q"),
                 tooltip=[
                     alt.Tooltip("SMILES:N"),
                     alt.Tooltip("MW:Q", format=".1f"),
@@ -916,14 +980,24 @@ if "pipeline_result" in st.session_state:
                     alt.Tooltip("Group:N"),
                 ],
             )
+            .transform_calculate(
+                _sort="indexof(" + str(_pca_order) + ", datum.Group)"
+            )
             .properties(height=420)
         )
         st.altair_chart(pca_chart, use_container_width=True)
-        st.caption(
-            "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
-            "Molecules closer together have more similar properties. "
-            "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
-        )
+        if _pca_has_labels:
+            st.caption(
+                "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
+                "Molecules are colored by activity class. "
+                "The goldenrod dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+            )
+        else:
+            st.caption(
+                "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
+                "Molecules closer together have more similar properties. "
+                "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+            )
 
 
 st.divider()
