@@ -716,51 +716,7 @@ if "pipeline_result" in st.session_state:
     audit_df = pd.DataFrame(result["audit_trail"])
     st.dataframe(audit_df)
 
-    # Activity class breakdown (only if user did activity labeling)
-    if _pl_label_map:
-        st.subheader("Activity Class Breakdown")
-        _kept_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
-        _removed_labels = [
-            _pl_label_map.get(r["smiles"]) for r in result["removed_log"]
-        ]
-        _class_names = ["Active", "Intermediate", "Inactive"]
-        _active_classes = [c for c in _class_names
-                           if c in _kept_labels or c in _removed_labels]
-
-        if _active_classes:
-            _kept_cols = st.columns(len(_active_classes))
-            for _ci, _cls in enumerate(_active_classes):
-                _n_kept = _kept_labels.count(_cls)
-                _n_removed = _removed_labels.count(_cls)
-                _kept_cols[_ci].metric(
-                    f"{_cls}",
-                    f"{_n_kept} kept",
-                    delta=f"{_n_removed} removed" if _n_removed else None,
-                    delta_color="off",
-                )
-        _n_unlabeled_kept = sum(1 for l in _kept_labels if l is None)
-        _n_unlabeled_removed = sum(1 for l in _removed_labels if l is None)
-        if _n_unlabeled_kept or _n_unlabeled_removed:
-            st.caption(
-                f"{_n_unlabeled_kept + _n_unlabeled_removed} molecules had no "
-                f"activity label ({_n_unlabeled_kept} kept, "
-                f"{_n_unlabeled_removed} removed)."
-            )
-
-    if result["removed_log"]:
-        st.subheader("Removed Molecules")
-        st.write(f"{len(result['removed_log'])} molecules removed across all steps")
-        removed_df = pd.DataFrame(result["removed_log"])[["original_index", "smiles", "step", "reason"]]
-        st.download_button(
-            "Download removed molecules as CSV",
-            data=removed_df.to_csv(index=False),
-            file_name=f"removed_molecules_{_ts}.csv",
-            mime="text/csv",
-        )
-        with st.expander("View removed molecules"):
-            st.dataframe(removed_df, use_container_width=True)
-
-    st.subheader("Kept Molecules")
+    # Build kept DataFrame
     kept_data = {"SMILES": result["kept_smiles"]}
     if result["sa_scores"] is not None:
         kept_data["SA_Score"] = result["sa_scores"]
@@ -789,14 +745,53 @@ if "pipeline_result" in st.session_state:
     })
     csv_data = metadata + kept_df.to_csv(index=False)
 
-    st.write(f"{len(kept_df)} molecules kept after preprocessing")
-    st.download_button("Download kept molecules as CSV", data=csv_data, file_name=f"kept_molecules_{_ts}.csv", mime="text/csv")
-    with st.expander("View kept molecules (first 20)"):
-        preview_records = kept_df.head(20).to_dict("records")
-        st.markdown(
-            _mol_table_html(preview_records, "SMILES", extra_kept),
-            unsafe_allow_html=True,
+    # Side-by-side: Kept (left, wider) | Removed (right, narrower)
+    _mol_left, _mol_right = st.columns([2, 1])
+    with _mol_left:
+        st.subheader("Kept Molecules")
+        st.write(f"{len(kept_df)} molecules kept after preprocessing")
+
+        # Activity class breakdown (inside kept column)
+        if _pl_label_map:
+            _kept_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+            _class_names = ["Active", "Intermediate", "Inactive"]
+            _active_classes = [c for c in _class_names if c in _kept_labels]
+            if _active_classes:
+                _kept_metric_cols = st.columns(len(_active_classes))
+                for _ci, _cls in enumerate(_active_classes):
+                    _kept_metric_cols[_ci].metric(_cls, _kept_labels.count(_cls))
+                _n_unlabeled = sum(1 for l in _kept_labels if l is None)
+                if _n_unlabeled:
+                    st.caption(f"{_n_unlabeled} molecules had no activity label.")
+
+        st.download_button(
+            "Download kept molecules as CSV",
+            data=csv_data,
+            file_name=f"kept_molecules_{_ts}.csv",
+            mime="text/csv",
         )
+        with st.expander("View kept molecules (first 20)"):
+            preview_records = kept_df.head(20).to_dict("records")
+            st.markdown(
+                _mol_table_html(preview_records, "SMILES", extra_kept),
+                unsafe_allow_html=True,
+            )
+
+    with _mol_right:
+        st.subheader("Removed Molecules")
+        if result["removed_log"]:
+            st.write(f"{len(result['removed_log'])} molecules removed")
+            removed_df = pd.DataFrame(result["removed_log"])[
+                ["original_index", "smiles", "step", "reason"]
+            ]
+            st.download_button(
+                "Download removed molecules as CSV",
+                data=removed_df.to_csv(index=False),
+                file_name=f"removed_molecules_{_ts}.csv",
+                mime="text/csv",
+            )
+        else:
+            st.write("No molecules were removed.")
 
     st.subheader("Descriptor Distributions")
     if len(result["kept_smiles"]) < 2:
@@ -942,7 +937,7 @@ if "pipeline_result" in st.session_state:
             _pca_domain = _pca_classes + ["FDA-approved drugs"]
             _class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
                              "Inactive": "#d62728"}
-            _pca_range = [_class_colors[c] for c in _pca_classes] + ["#DAA520"]
+            _pca_range = [_class_colors[c] for c in _pca_classes] + ["#9467bd"]
             # FDA dots should be behind user molecules
             _pca_order = ["FDA-approved drugs"] + _pca_classes
         else:
@@ -990,7 +985,7 @@ if "pipeline_result" in st.session_state:
             st.caption(
                 "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
                 "Molecules are colored by activity class. "
-                "The goldenrod dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+                "The purple dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
             )
         else:
             st.caption(
