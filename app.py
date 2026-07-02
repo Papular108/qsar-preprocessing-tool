@@ -134,21 +134,30 @@ st.markdown(
     """<style>
     /* ── Feature tab bar styling ── */
     div[data-testid="stTabs"] > div[role="tablist"] {
-        background: linear-gradient(180deg, rgba(240,242,246,0.6) 0%, rgba(240,242,246,0) 100%);
-        border-bottom: 2px solid #e0e0e0;
+        background: #f0f2f6;
+        border-bottom: 3px solid #d0d3d9;
         gap: 0;
+        padding: 0 4px;
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button {
         flex: 1 1 0;
-        font-size: 1.2rem;
-        padding: 12px 24px;
-        font-weight: 500;
-        border-bottom: 3px solid transparent;
-        transition: border-color 0.2s, font-weight 0.2s;
+        font-size: 1.5rem;
+        padding: 16px 32px;
+        font-weight: 600;
+        border-bottom: 4px solid transparent;
+        border-radius: 10px 10px 0 0;
+        background: transparent;
+        transition: all 0.2s ease;
+    }
+    div[data-testid="stTabs"] > div[role="tablist"] > button:hover {
+        background: rgba(255,255,255,0.6);
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] {
-        font-weight: 700;
-        border-bottom: 3px solid #ff4b4b;
+        font-weight: 800;
+        background: white;
+        border-bottom: 4px solid #ff4b4b;
+        border-radius: 10px 10px 0 0;
+        box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
     }
     </style>""",
     unsafe_allow_html=True,
