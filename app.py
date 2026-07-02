@@ -290,10 +290,10 @@ if _uploaded_df is not None:
                 _details.append(
                     f"Rows removed (unparseable SMILES): **{_report['invalid_smiles_removed']}**"
                 )
-            if _report["pchembl_computed"]:
+            if _report["pchembl_recomputed"]:
                 _details.append(
-                    f"pchembl_value computed from standard_value: "
-                    f"**{_report['pchembl_computed']}** "
+                    f"pchembl_value recomputed from standard_value: "
+                    f"**{_report['pchembl_recomputed']}** "
                     f"(`pchembl = 9 - log`_`10`_`(standard_value)`)"
                 )
             if _report["stdval_computed"]:

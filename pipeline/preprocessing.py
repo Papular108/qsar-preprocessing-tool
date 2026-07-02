@@ -383,7 +383,7 @@ def clean_dataset(df, smiles_column):
                 - rows_before (int)
                 - missing_smiles_removed (int), missing_smiles_rows (list of int)
                 - invalid_smiles_removed (int), invalid_smiles_rows (list of dicts)
-                - pchembl_computed (int), pchembl_computed_rows (list of int)
+                - pchembl_recomputed (int), pchembl_recomputed_rows (list of int)
                 - stdval_computed (int), stdval_computed_rows (list of int)
                 - inconsistent_count (int), inconsistent_rows (list of dicts)
                 - both_missing_count (int), both_missing_rows (list of int)
@@ -421,24 +421,36 @@ def clean_dataset(df, smiles_column):
     _has_pchembl = "pchembl_value" in df.columns
     _has_stdval = "standard_value" in df.columns
 
-    report["pchembl_computed"] = 0
-    report["pchembl_computed_rows"] = []
     report["stdval_computed"] = 0
     report["stdval_computed_rows"] = []
     report["inconsistent_count"] = 0
     report["inconsistent_rows"] = []
     report["both_missing_count"] = 0
     report["both_missing_rows"] = []
+    report["pchembl_recomputed"] = 0
+    report["pchembl_recomputed_rows"] = []
 
     if _has_pchembl and _has_stdval:
+        # Pass 1: Back-compute standard_value where missing, and check
+        # consistency of original pchembl vs standard_value BEFORE overwriting
         for i in range(len(df)):
             _pv = df.at[df.index[i], "pchembl_value"]
             _sv = df.at[df.index[i], "standard_value"]
             _pv_valid = _pv == _pv and _pv is not None  # not NaN
             _sv_valid = _sv == _sv and _sv is not None
 
-            if _pv_valid and _sv_valid:
-                # Both present — check consistency
+            if _pv_valid and not _sv_valid:
+                # pchembl present, standard_value missing -> back-compute
+                try:
+                    _pv_f = float(_pv)
+                    _computed_sv = round(10 ** (9.0 - _pv_f), 3)
+                    df.at[df.index[i], "standard_value"] = _computed_sv
+                    report["stdval_computed"] += 1
+                    report["stdval_computed_rows"].append(i)
+                except (ValueError, TypeError):
+                    pass
+            elif _pv_valid and _sv_valid:
+                # Both present -> check consistency before we overwrite
                 try:
                     _sv_f = float(_sv)
                     _pv_f = float(_pv)
@@ -448,39 +460,32 @@ def clean_dataset(df, smiles_column):
                             report["inconsistent_count"] += 1
                             report["inconsistent_rows"].append({
                                 "row": i,
-                                "pchembl_value": round(_pv_f, 3),
+                                "original_pchembl": round(_pv_f, 3),
                                 "standard_value": round(_sv_f, 3),
-                                "expected_pchembl": round(_expected, 3),
+                                "recomputed_pchembl": round(_expected, 3),
                                 "difference": round(abs(_pv_f - _expected), 3),
                             })
                 except (ValueError, TypeError):
                     pass
-            elif _pv_valid and not _sv_valid:
-                # pchembl present, standard_value missing → back-compute
-                try:
-                    _pv_f = float(_pv)
-                    _computed_sv = round(10 ** (9.0 - _pv_f), 3)
-                    df.at[df.index[i], "standard_value"] = _computed_sv
-                    report["stdval_computed"] += 1
-                    report["stdval_computed_rows"].append(i)
-                except (ValueError, TypeError):
-                    pass
-            elif not _pv_valid and _sv_valid:
-                # standard_value present, pchembl missing → compute pchembl
+            elif not _pv_valid and not _sv_valid:
+                report["both_missing_count"] += 1
+                report["both_missing_rows"].append(i)
+
+        # Pass 2: Recompute ALL pchembl_value from standard_value
+        for i in range(len(df)):
+            _sv = df.at[df.index[i], "standard_value"]
+            _sv_valid = _sv == _sv and _sv is not None
+            if _sv_valid:
                 try:
                     _sv_f = float(_sv)
                     if _sv_f > 0:
                         df.at[df.index[i], "pchembl_value"] = round(
                             9.0 - math.log10(_sv_f), 3
                         )
-                        report["pchembl_computed"] += 1
-                        report["pchembl_computed_rows"].append(i)
+                        report["pchembl_recomputed"] += 1
+                        report["pchembl_recomputed_rows"].append(i)
                 except (ValueError, TypeError):
                     pass
-            else:
-                # Both missing
-                report["both_missing_count"] += 1
-                report["both_missing_rows"].append(i)
     elif not _has_pchembl and _has_stdval:
         # Create pchembl_value column entirely from standard_value
         _pvals = []
@@ -489,8 +494,8 @@ def clean_dataset(df, smiles_column):
                 _sv_f = float(_sv)
                 if _sv_f > 0:
                     _pvals.append(round(9.0 - math.log10(_sv_f), 3))
-                    report["pchembl_computed"] += 1
-                    report["pchembl_computed_rows"].append(i)
+                    report["pchembl_recomputed"] += 1
+                    report["pchembl_recomputed_rows"].append(i)
                 else:
                     _pvals.append(None)
             except (ValueError, TypeError):
