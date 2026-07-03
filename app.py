@@ -132,41 +132,56 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
-    /* ── SwissADME-style navigation bar ── */
-    div.nav-bar-container {
-        display: flex;
-        gap: 8px;
-        padding: 8px 4px;
-        background: #e8eaf0;
+    /* ── Dashboard navigation cards ── */
+    .nav-card-row {
+        display: flex; gap: 16px; margin-bottom: 1.5rem;
+    }
+    .nav-card {
+        flex: 1 1 0;
+        min-height: 160px;
+        padding: 30px 20px 24px 20px;
+        background: white;
+        border: 1px solid #e0e3e8;
         border-radius: 12px;
-        margin-bottom: 1.5rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        text-align: center;
+        cursor: pointer;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        display: flex; flex-direction: column; align-items: center; justify-content: center;
     }
-    /* Style the st.button elements used as nav cards */
-    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .nav-active button {
-        background: white !important;
-        border: none !important;
-        border-bottom: 5px solid #ff4b4b !important;
-        box-shadow: 0 2px 12px rgba(0,0,0,0.10) !important;
-        border-radius: 10px !important;
+    .nav-card:hover {
+        transform: scale(1.03);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
     }
-    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .nav-inactive button {
-        background: transparent !important;
-        border: none !important;
-        border-bottom: 5px solid transparent !important;
-        border-radius: 10px !important;
+    .nav-card.active {
+        background: #fafbff;
+        border-left: 4px solid #ff4b4b;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
     }
-    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .nav-inactive button:hover {
-        background: rgba(255,255,255,0.5) !important;
+    .nav-card .card-icon { margin-bottom: 12px; }
+    .nav-card .card-icon svg { width: 48px; height: 48px; }
+    .nav-card .card-title {
+        font-size: 1.3rem; font-weight: 700; color: #1a1a2e; margin-bottom: 6px;
     }
-    /* Common nav button styling */
-    .nav-active button, .nav-inactive button {
-        width: 100% !important;
-        padding: 16px 8px 12px 8px !important;
-        min-height: 90px !important;
-        cursor: pointer !important;
+    .nav-card .card-subtitle {
+        font-size: 0.85rem; color: #8c8c9e; line-height: 1.3;
     }
-    .nav-active button p, .nav-inactive button p {
-        text-align: center !important;
+    /* Hide the real st.button widgets used for click handling */
+    .nav-btn-hidden button {
+        position: absolute !important;
+        top: 0; left: 0; width: 100% !important; height: 100% !important;
+        opacity: 0 !important; cursor: pointer !important;
+    }
+    .nav-btn-hidden {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    }
+    /* Make the column a positioning context */
+    div[data-testid="stColumn"]:has(.nav-btn-hidden) {
+        position: relative;
+    }
+    /* Subtle divider below nav */
+    .nav-divider {
+        border: none; border-top: 1px solid #e8eaf0; margin: 0 0 1.5rem 0;
     }
     </style>""",
     unsafe_allow_html=True,
@@ -177,30 +192,45 @@ st.sidebar.markdown("### 📚 Documentation")
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
-# ── Navigation bar ──
+# ── Navigation cards ──
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "preprocessing"
 
-_NAV_ITEMS = [
-    ("preprocessing", "🔬", "Preprocessing"),
-    ("explorer",      "🧬", "Molecule Explorer"),
-    ("comparison",    "⚖️", "Filter Comparison"),
-    ("converter",     "🔄", "Molecule Converter"),
+_SVG_PREPROCESSING = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 6h20v8l-8 10v12l-4 4V24L14 14V6z" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="{color}" fill-opacity="0.1"/><circle cx="34" cy="10" r="3" fill="{color}" fill-opacity="0.3"/><circle cx="28" cy="8" r="2" fill="{color}" fill-opacity="0.4"/><circle cx="20" cy="9" r="2.5" fill="{color}" fill-opacity="0.35"/></svg>'
+_SVG_EXPLORER = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M24 10l8.66 5v10L24 30l-8.66-5V15z" stroke="{color}" stroke-width="2" stroke-linejoin="round" fill="{color}" fill-opacity="0.08"/><circle cx="24" cy="20" r="12" stroke="{color}" stroke-width="2.5" fill="none"/><line x1="33" y1="29" x2="42" y2="38" stroke="{color}" stroke-width="3" stroke-linecap="round"/></svg>'
+_SVG_COMPARISON = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="8" width="16" height="32" rx="3" stroke="{color}" stroke-width="2.5" fill="{color}" fill-opacity="0.08"/><rect x="28" y="8" width="16" height="32" rx="3" stroke="{color}" stroke-width="2.5" fill="{color}" fill-opacity="0.08"/><line x1="8" y1="16" x2="16" y2="16" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="22" x2="14" y2="22" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="28" x2="16" y2="28" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="32" y1="16" x2="40" y2="16" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="32" y1="22" x2="38" y2="22" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="32" y1="28" x2="40" y2="28" stroke="{color}" stroke-width="2" stroke-linecap="round"/><path d="M22 20l2 2 2-2M22 28l2-2 2 2" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+_SVG_CONVERTER = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 18h20l-6-6" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M34 30H14l6 6" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+
+_NAV_CARDS = [
+    ("preprocessing", _SVG_PREPROCESSING, "Preprocessing",      "Clean, filter & featurize molecules"),
+    ("explorer",      _SVG_EXPLORER,      "Molecule Explorer",   "Analyze a single molecule in detail"),
+    ("comparison",    _SVG_COMPARISON,     "Filter Comparison",   "Compare filter settings side by side"),
+    ("converter",     _SVG_CONVERTER,      "Molecule Converter",  "Convert between SMILES, InChI & more"),
 ]
 
-nav_cols = st.columns(len(_NAV_ITEMS))
-for col, (key, icon, label) in zip(nav_cols, _NAV_ITEMS):
+nav_cols = st.columns(4)
+for col, (key, svg_template, title, subtitle) in zip(nav_cols, _NAV_CARDS):
     is_active = st.session_state["active_tab"] == key
-    css_class = "nav-active" if is_active else "nav-inactive"
+    icon_color = "#ff4b4b" if is_active else "#4A90D9"
+    svg_html = svg_template.replace("{color}", icon_color)
+    active_cls = " active" if is_active else ""
     with col:
-        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
-        if st.button(f"{icon}\n\n**{label}**", key=f"nav_{key}", use_container_width=True):
+        st.markdown(
+            f'<div class="nav-card{active_cls}">'
+            f'  <div class="card-icon">{svg_html}</div>'
+            f'  <div class="card-title">{title}</div>'
+            f'  <div class="card-subtitle">{subtitle}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown('<div class="nav-btn-hidden">', unsafe_allow_html=True)
+        if st.button(title, key=f"nav_{key}", use_container_width=True):
             if not is_active:
                 st.session_state["active_tab"] = key
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown("---")
+st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: Preprocessing
