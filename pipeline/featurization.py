@@ -37,7 +37,7 @@ def compute_fingerprint(mol, fp_type="morgan", radius=2, n_bits=2048):
 
     Parameters:
         mol: RDKit Mol object
-        fp_type (str): one of "morgan", "maccs", "topological", "atom_pair", "torsion", "avalon"
+        fp_type (str): one of "morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon", "pattern", "layered"
         radius (int): radius for morgan fingerprint (ignored for other types)
         n_bits (int): length of the bit vector (ignored for maccs, which is fixed length)
 
@@ -49,6 +49,8 @@ def compute_fingerprint(mol, fp_type="morgan", radius=2, n_bits=2048):
     try:
         if fp_type == "morgan":
             fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
+        elif fp_type == "fcfp":
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits, useFeatures=True)
         elif fp_type == "maccs":
             fp = MACCSkeys.GenMACCSKeys(mol)
         elif fp_type == "topological":
@@ -59,6 +61,10 @@ def compute_fingerprint(mol, fp_type="morgan", radius=2, n_bits=2048):
             fp = rdMolDescriptors.GetHashedTopologicalTorsionFingerprintAsBitVect(mol, nBits=n_bits)
         elif fp_type == "avalon":
             fp = pyAvalonTools.GetAvalonFP(mol, nBits=n_bits)
+        elif fp_type == "pattern":
+            fp = Chem.PatternFingerprint(mol, fpSize=n_bits)
+        elif fp_type == "layered":
+            fp = Chem.LayeredFingerprint(mol, fpSize=n_bits)
         else:
             return None, f"Unknown fingerprint type: '{fp_type}'"
 

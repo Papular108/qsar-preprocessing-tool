@@ -1080,8 +1080,13 @@ if st.session_state["active_tab"] == "preprocessing":
 
     fp_type = st.selectbox(
         "Fingerprint type",
-        ["morgan", "maccs", "topological", "atom_pair", "torsion", "avalon"],
-        help="Morgan (ECFP) is the most common default for machine learning. MACCS is faster but less detailed (166 fixed structural keys). Others are specialized for specific use cases.",
+        ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon", "pattern", "layered"],
+        help="Morgan (ECFP) is the most common default for machine learning. "
+             "FCFP: Like Morgan but uses pharmacophoric features (H-bond donor/acceptor, aromatic, etc.) instead of atom types. "
+             "MACCS is faster but less detailed (166 fixed structural keys). "
+             "Pattern: Substructure pattern-based fingerprint. "
+             "Layered: Encodes different molecular features in separate layers. "
+             "Others are specialized for specific use cases.",
     )
     if fp_type == "maccs":
         st.caption("MACCS keys are a fixed, predefined set of 166 structural patterns — bit size is not adjustable.")
@@ -1094,7 +1099,7 @@ if st.session_state["active_tab"] == "preprocessing":
         help="Larger bit vectors capture more structural detail but increase memory and computation. 2048 is the most common choice in QSAR literature.",
     )
 
-    if fp_type == "morgan":
+    if fp_type in ("morgan", "fcfp"):
         radius = st.number_input(
             "Morgan radius",
             min_value=1,
@@ -1387,16 +1392,38 @@ if st.session_state["active_tab"] == "explorer":
 
             # Fingerprint Preview
             st.divider()
-            st.subheader("Fingerprint Preview (Morgan, radius=2, 2048 bits)")
-            _exp_fp, _exp_fp_err = compute_fingerprint(_exp_mol, fp_type="morgan", radius=2, n_bits=2048)
+            _prev_fp_type = st.selectbox(
+                "Fingerprint type (preview)",
+                ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon", "pattern", "layered"],
+                key="explorer_fp_type",
+            )
+            if _prev_fp_type == "maccs":
+                _prev_n_bits = 167
+            else:
+                _prev_n_bits = st.number_input(
+                    "Number of bits (preview)", min_value=128, max_value=4096, value=2048, step=128,
+                    key="explorer_fp_nbits",
+                )
+            if _prev_fp_type in ("morgan", "fcfp"):
+                _prev_radius = st.number_input(
+                    "Radius (preview)", min_value=1, max_value=4, value=2, step=1,
+                    key="explorer_fp_radius",
+                )
+            else:
+                _prev_radius = 2
+
+            _prev_label = f"{_prev_fp_type}, {_prev_n_bits} bits"
+            st.subheader(f"Fingerprint Preview ({_prev_label})")
+            _exp_fp, _exp_fp_err = compute_fingerprint(_exp_mol, fp_type=_prev_fp_type, radius=_prev_radius, n_bits=_prev_n_bits)
             if _exp_fp_err:
                 st.error(_exp_fp_err)
             else:
                 _exp_bits_on = int(_exp_fp.sum())
-                _exp_density = _exp_bits_on / 2048
+                _exp_total_bits = len(_exp_fp)
+                _exp_density = _exp_bits_on / _exp_total_bits
                 _fp_c1, _fp_c2, _fp_c3 = st.columns(3)
                 _fp_c1.metric("Bits ON", _exp_bits_on)
-                _fp_c2.metric("Bits OFF", 2048 - _exp_bits_on)
+                _fp_c2.metric("Bits OFF", _exp_total_bits - _exp_bits_on)
                 _fp_c3.metric("Bit Density", f"{_exp_density:.1%}")
                 st.markdown("**Bit density**")
                 st.progress(_exp_density)
