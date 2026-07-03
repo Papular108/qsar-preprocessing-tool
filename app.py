@@ -132,51 +132,30 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
-    /* ── Dashboard navigation cards ── */
-    .nav-card {
-        background: white;
-        border: 1px solid #e0e3e8;
-        border-radius: 12px;
-        padding: 24px 16px;
-        text-align: center;
-        min-height: 140px;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.2s ease;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-    }
-    .nav-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    }
-    .nav-card.active {
-        border-bottom: 4px solid #ff4b4b;
-        background: #fafbff;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
-    }
-    .nav-icon { font-size: 3rem; margin-bottom: 8px; }
-    .nav-title { font-size: 1.2rem; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
-    .nav-subtitle { font-size: 0.85rem; color: #666; font-weight: 400; }
-    /* Minimal "open" buttons below each card */
-    .nav-open-btn button {
-        background: transparent !important;
-        border: 1px solid #e0e3e8 !important;
-        color: #666 !important;
-        font-size: 0.8rem !important;
-        padding: 4px 12px !important;
-        border-radius: 6px !important;
-        margin-top: 4px !important;
-    }
-    .nav-open-btn button:hover {
-        background: #f0f2f6 !important;
+    /* ── Nav card buttons: target FIRST horizontal block only ── */
+    [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] > button {
+        min-height: 120px !important;
+        font-size: 1.3rem !important;
+        font-weight: 700 !important;
+        border-radius: 12px !important;
+        border: 2px solid #e0e3e8 !important;
+        background: white !important;
         color: #1a1a2e !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+        transition: all 0.2s ease !important;
+        white-space: pre-wrap !important;
+        line-height: 2.0 !important;
     }
-    .nav-open-btn.active button {
-        background: #ff4b4b !important;
+    [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] > button:hover {
+        transform: translateY(-3px) !important;
+        box-shadow: 0 6px 20px rgba(0,0,0,0.12) !important;
         border-color: #ff4b4b !important;
-        color: white !important;
+    }
+    /* Active nav card — applied via wrapper div */
+    .nav-active [data-testid="stButton"] > button {
+        background: #fafbff !important;
+        border-bottom: 4px solid #ff4b4b !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
     }
     </style>""",
     unsafe_allow_html=True,
@@ -199,23 +178,16 @@ _NAV_CARDS = [
 nav_cols = st.columns(4)
 for col, (key, icon, title, subtitle) in zip(nav_cols, _NAV_CARDS):
     is_active = st.session_state["active_tab"] == key
-    active_cls = " active" if is_active else ""
-    btn_label = f"● {title}" if is_active else f"Open {title}"
     with col:
-        st.markdown(
-            f'<div class="nav-card{active_cls}">'
-            f'<div class="nav-icon">{icon}</div>'
-            f'<div class="nav-title">{title}</div>'
-            f'<div class="nav-subtitle">{subtitle}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown(f'<div class="nav-open-btn{active_cls}">', unsafe_allow_html=True)
-        if st.button(btn_label, key=f"nav_{key}", use_container_width=True):
+        if is_active:
+            st.markdown('<div class="nav-active">', unsafe_allow_html=True)
+        if st.button(f"{icon}\n{title}", key=f"nav_{key}", use_container_width=True):
             if not is_active:
                 st.session_state["active_tab"] = key
                 st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
+        if is_active:
+            st.markdown('</div>', unsafe_allow_html=True)
+        st.caption(subtitle)
 
 st.divider()
 
