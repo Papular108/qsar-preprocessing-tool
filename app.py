@@ -1118,7 +1118,7 @@ if st.session_state["active_tab"] == "preprocessing":
         _be_chart, _be_n_gi, _be_n_bbb, _be_result_df = plot_boiled_egg(
             _be_df, label_col="Activity" if _be_has_labels else None,
         )
-        st.altair_chart(_be_chart, use_container_width=True)
+        st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False})
 
         st.caption(
             "Molecules inside the white ellipse are predicted to be passively absorbed by the GI tract. "

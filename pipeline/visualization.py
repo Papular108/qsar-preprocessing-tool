@@ -1,8 +1,6 @@
 from rdkit.Chem import Draw
 from io import BytesIO
 import base64
-import altair as alt
-import pandas as pd
 import numpy as np
 
 
@@ -37,16 +35,6 @@ def mol_to_base64_png(mol, size=(300, 300)):
     return base64.b64encode(mol_to_image(mol, size=size)).decode("utf-8")
 
 
-def _ellipse_df(cx, cy, a, b, label, n_points=200):
-    """Generate points for an ellipse outline."""
-    t = np.linspace(0, 2 * np.pi, n_points)
-    return pd.DataFrame({
-        "x": cx + a * np.cos(t),
-        "y": cy + b * np.sin(t),
-        "zone": label,
-    })
-
-
 def _point_in_ellipse(x, y, cx, cy, a, b):
     """Check if (x, y) is inside the ellipse centered at (cx, cy) with semi-axes a, b."""
     return ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 <= 1.0
@@ -54,105 +42,109 @@ def _point_in_ellipse(x, y, cx, cy, a, b):
 
 def plot_boiled_egg(mols_df, label_col=None):
     """
-    Create a BOILED-Egg diagram (Daina & Zoete, 2016).
+    Create a BOILED-Egg diagram (Daina & Zoete, 2016) using Plotly.
 
     Parameters:
         mols_df (DataFrame): must contain 'WLOGP' and 'TPSA' columns, and 'SMILES'
         label_col (str|None): column with activity labels (Active/Intermediate/Inactive)
 
     Returns:
-        tuple: (altair Chart, n_gi, n_bbb)
+        tuple: (plotly Figure, n_gi, n_bbb, result_df)
     """
-    # Ellipse parameters
-    GI_CX, GI_CY, GI_A, GI_B = 2.5, 70, 3.0, 60
-    BBB_CX, BBB_CY, BBB_A, BBB_B = 0.5, 45, 2.0, 30
+    import plotly.graph_objects as go
 
-    # Classify each molecule
+    # Ellipse parameters (SwissADME values)
+    GI_CX, GI_CY, GI_A, GI_B = 2.673, 71.051, 3.695, 64.118
+    BBB_CX, BBB_CY, BBB_A, BBB_B = 0.267, 29.246, 1.842, 24.993
+
+    # Classify molecules
     df = mols_df.copy()
     df["in_GI"] = df.apply(lambda r: _point_in_ellipse(r["WLOGP"], r["TPSA"], GI_CX, GI_CY, GI_A, GI_B), axis=1)
     df["in_BBB"] = df.apply(lambda r: _point_in_ellipse(r["WLOGP"], r["TPSA"], BBB_CX, BBB_CY, BBB_A, BBB_B), axis=1)
     n_gi = int(df["in_GI"].sum())
     n_bbb = int(df["in_BBB"].sum())
 
-    # Ellipse outlines
-    gi_ellipse = _ellipse_df(GI_CX, GI_CY, GI_A, GI_B, "GI absorption zone")
-    bbb_ellipse = _ellipse_df(BBB_CX, BBB_CY, BBB_A, BBB_B, "BBB permeability zone")
-    ellipses = pd.concat([gi_ellipse, bbb_ellipse], ignore_index=True)
+    # Sample if too many molecules
+    plot_df = df.sample(n=300, random_state=42) if len(df) > 500 else df
 
-    # Build ellipse layer
-    zone_color = alt.Scale(
-        domain=["GI absorption zone", "BBB permeability zone"],
-        range=["#AAAAAA", "#F0C75E"],
-    )
-    ellipse_layer = (
-        alt.Chart(ellipses)
-        .mark_line(strokeWidth=2.5, strokeDash=[6, 3])
-        .encode(
-            x=alt.X("x:Q", title="WLOGP (Lipophilicity)"),
-            y=alt.Y("y:Q", title="TPSA (\u00c5\u00b2)"),
-            color=alt.Color("zone:N", scale=zone_color, legend=alt.Legend(title="Zone")),
-            detail="zone:N",
-        )
-    )
+    fig = go.Figure()
 
-    # Filled ellipse backgrounds
-    gi_fill = (
-        alt.Chart(gi_ellipse)
-        .mark_area(opacity=0.08, color="#AAAAAA")
-        .encode(x="x:Q", y="y:Q")
-    )
-    bbb_fill = (
-        alt.Chart(bbb_ellipse)
-        .mark_area(opacity=0.15, color="#F0C75E")
-        .encode(x="x:Q", y="y:Q")
-    )
+    # GI absorption ellipse (white/grey)
+    theta = np.linspace(0, 2 * np.pi, 200)
+    gi_x = GI_CX + GI_A * np.cos(theta)
+    gi_y = GI_CY + GI_B * np.sin(theta)
+    fig.add_trace(go.Scatter(
+        x=gi_x, y=gi_y, fill="toself",
+        fillcolor="rgba(220,220,220,0.5)",
+        line=dict(color="grey", width=1),
+        name="GI absorption zone",
+        hoverinfo="skip",
+    ))
 
-    # Scatter layer
-    tooltip_fields = [
-        alt.Tooltip("SMILES:N"),
-        alt.Tooltip("WLOGP:Q", format=".2f"),
-        alt.Tooltip("TPSA:Q", format=".1f"),
-    ]
+    # BBB ellipse (yellow)
+    bbb_x = BBB_CX + BBB_A * np.cos(theta)
+    bbb_y = BBB_CY + BBB_B * np.sin(theta)
+    fig.add_trace(go.Scatter(
+        x=bbb_x, y=bbb_y, fill="toself",
+        fillcolor="rgba(255,215,0,0.5)",
+        line=dict(color="goldenrod", width=1),
+        name="BBB zone",
+        hoverinfo="skip",
+    ))
 
-    has_labels = label_col and label_col in df.columns and df[label_col].notna().any()
+    # Scatter points
+    has_labels = label_col and label_col in plot_df.columns and plot_df[label_col].notna().any()
     if has_labels:
-        tooltip_fields.append(alt.Tooltip(f"{label_col}:N"))
-        classes = [c for c in ["Active", "Intermediate", "Inactive"] if c in df[label_col].values]
         class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e", "Inactive": "#d62728"}
-        scatter_color = alt.Color(
-            f"{label_col}:N",
-            scale=alt.Scale(domain=classes, range=[class_colors[c] for c in classes]),
-            legend=alt.Legend(title="Activity"),
-        )
+        for cls in ["Active", "Intermediate", "Inactive"]:
+            subset = plot_df[plot_df[label_col] == cls]
+            if len(subset) == 0:
+                continue
+            fig.add_trace(go.Scatter(
+                x=subset["WLOGP"], y=subset["TPSA"],
+                mode="markers",
+                marker=dict(size=8, color=class_colors[cls], opacity=0.8),
+                name=cls,
+                text=subset["SMILES"],
+                hovertemplate="<b>%{text}</b><br>WLOGP=%{x:.2f}<br>TPSA=%{y:.1f}<extra></extra>",
+            ))
+        # Unlabeled molecules
+        unlabeled = plot_df[plot_df[label_col].isna()]
+        if len(unlabeled) > 0:
+            fig.add_trace(go.Scatter(
+                x=unlabeled["WLOGP"], y=unlabeled["TPSA"],
+                mode="markers",
+                marker=dict(size=8, color="grey", opacity=0.8),
+                name="Unlabeled",
+                text=unlabeled["SMILES"],
+                hovertemplate="<b>%{text}</b><br>WLOGP=%{x:.2f}<br>TPSA=%{y:.1f}<extra></extra>",
+            ))
     else:
-        df["_class"] = "Molecule"
-        scatter_color = alt.Color(
-            "_class:N",
-            scale=alt.Scale(domain=["Molecule"], range=["#4C72B0"]),
-            legend=alt.Legend(title=""),
-        )
+        fig.add_trace(go.Scatter(
+            x=plot_df["WLOGP"], y=plot_df["TPSA"],
+            mode="markers",
+            marker=dict(size=8, color="grey", opacity=0.8),
+            name="Molecules",
+            text=plot_df["SMILES"],
+            hovertemplate="<b>%{text}</b><br>WLOGP=%{x:.2f}<br>TPSA=%{y:.1f}<extra></extra>",
+        ))
 
-    scatter_layer = (
-        alt.Chart(df)
-        .mark_circle(size=70, opacity=0.85)
-        .encode(
-            x="WLOGP:Q",
-            y="TPSA:Q",
-            color=scatter_color,
-            tooltip=tooltip_fields,
-        )
+    fig.update_layout(
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        width=600,
+        height=500,
+        xaxis=dict(title="WLOGP (Lipophilicity)", range=[-2, 7],
+                   gridcolor="#f0f0f0", showgrid=True),
+        yaxis=dict(title="TPSA (\u00c5\u00b2)", range=[-5, 180],
+                   gridcolor="#f0f0f0", showgrid=True),
+        legend=dict(bgcolor="white", bordercolor="#e0e0e0", borderwidth=1),
+        title=dict(text="BOILED-Egg \u2014 GI Absorption & BBB Permeability",
+                   font=dict(size=14)),
+        margin=dict(l=60, r=30, t=50, b=50),
     )
 
-    chart = (
-        (gi_fill + bbb_fill + ellipse_layer + scatter_layer)
-        .properties(
-            title="BOILED-Egg Model \u2014 GI Absorption & BBB Permeability",
-            height=450,
-        )
-        .configure_title(fontSize=16, anchor="start")
-    )
-
-    return chart, n_gi, n_bbb, df
+    return fig, n_gi, n_bbb, df
 
 
 def plot_radar_chart(descriptors_dict):
