@@ -174,13 +174,13 @@ def plot_radar_chart(descriptors_dict):
     rotb = descriptors_dict["RotatableBonds"]
     fcsp3 = descriptors_dict["FractionCsp3"]
 
-    # Normalize to 0-1 (SwissADME axes)
-    lipo = min(max((logp + 2.0) / 9.0, 0.0), 1.0)        # LIPO: -2..7 → 0..1
-    size = min(mw / 500.0, 1.0)                            # SIZE: 0..500 → 0..1
-    polar = min(tpsa / 140.0, 1.0)                         # POLAR: 0..140 → 0..1
-    insolu = min(max(max(logp, -2.0) / 7.0, 0.0), 1.0)    # INSOLU: high LogP = insoluble
-    insatu = min(max(1.0 - fcsp3, 0.0), 1.0)               # INSATU: 1-Fsp3
-    flex = min(rotb / 10.0, 1.0)                           # FLEX: 0..10 → 0..1
+    # Normalize to 0-1 (SwissADME ranges)
+    lipo = np.clip((logp - (-2)) / (5 - (-2)), 0, 1)      # LIPO: [-2, 5] → 0..1
+    size = np.clip(mw / 500.0, 0, 1)                       # SIZE: [0, 500] → 0..1
+    polar = np.clip(tpsa / 140.0, 0, 1)                    # POLAR: [0, 140] → 0..1
+    insolu = np.clip((logp - (-2)) / (5 - (-2)), 0, 1)    # INSOLU: [-2, 5] → 0..1
+    insatu = np.clip(1.0 - fcsp3, 0, 1)                    # INSATU: 1-Fsp3
+    flex = np.clip(rotb / 9.0, 0, 1)                       # FLEX: [0, 9] → 0..1
 
     categories = ["LIPO", "SIZE", "POLAR", "INSOLU", "INSATU", "FLEX"]
     values = [lipo, size, polar, insolu, insatu, flex]
@@ -192,7 +192,7 @@ def plot_radar_chart(descriptors_dict):
         r=values_closed,
         theta=categories_closed,
         fill="toself",
-        fillcolor="rgba(255, 99, 132, 0.25)",
+        fillcolor="rgba(255, 99, 132, 0.35)",
         line=dict(color="#d62728", width=2),
         marker=dict(size=5, color="#d62728"),
     ))
@@ -215,11 +215,11 @@ def plot_radar_chart(descriptors_dict):
             ),
         ),
         showlegend=False,
-        margin=dict(l=120, r=120, t=120, b=120),
+        margin=dict(l=130, r=130, t=100, b=100),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        width=500,
-        height=500,
+        width=520,
+        height=520,
     )
 
     return fig

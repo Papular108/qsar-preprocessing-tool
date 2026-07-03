@@ -1343,7 +1343,7 @@ if st.session_state["active_tab"] == "explorer":
 
             _exp_canonical = Chem.MolToSmiles(_exp_mol)
             _exp_insatu = 1.0 - _exp_fcsp3
-            _exp_insolu_val = max(_exp_logp, -2.0) / 7.0
+            _exp_insolu_val = (_exp_logp + 2.0) / 7.0
 
             st.markdown(
                 '<div style="border:1px solid #e0e0e0; border-radius:10px; padding:16px; background:#fff">',
