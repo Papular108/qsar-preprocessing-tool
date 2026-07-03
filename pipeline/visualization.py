@@ -157,11 +157,11 @@ def plot_boiled_egg(mols_df, label_col=None):
 
 def plot_radar_chart(descriptors_dict):
     """
-    Create a radar/spider chart of 6 physicochemical properties.
+    Create a SwissADME-style radar/spider chart of 6 physicochemical properties.
 
     Parameters:
         descriptors_dict (dict): must contain keys: MW, TPSA, LogP,
-            RotatableBonds, FractionCsp3, QED
+            RotatableBonds, FractionCsp3
 
     Returns:
         plotly Figure
@@ -173,26 +173,17 @@ def plot_radar_chart(descriptors_dict):
     logp = descriptors_dict["LogP"]
     rotb = descriptors_dict["RotatableBonds"]
     fcsp3 = descriptors_dict["FractionCsp3"]
-    qed = descriptors_dict["QED"]
 
-    # Normalize to 0-1
-    size = min(mw / 500.0, 1.0)
-    polarity = min(tpsa / 140.0, 1.0)
-    # Invert LogP: high LogP → low solubility → low value
-    solubility = min(max(1.0 - max(logp, -2.0) / 7.0, 0.0), 1.0)
-    flexibility = min(rotb / 10.0, 1.0)
-    saturation = min(max(fcsp3, 0.0), 1.0)
-    druglikeness = min(max(qed, 0.0), 1.0)
+    # Normalize to 0-1 (SwissADME axes)
+    lipo = min(max((logp + 2.0) / 9.0, 0.0), 1.0)        # LIPO: -2..7 → 0..1
+    size = min(mw / 500.0, 1.0)                            # SIZE: 0..500 → 0..1
+    polar = min(tpsa / 140.0, 1.0)                         # POLAR: 0..140 → 0..1
+    insolu = min(max(max(logp, -2.0) / 7.0, 0.0), 1.0)    # INSOLU: high LogP = insoluble
+    insatu = min(max(1.0 - fcsp3, 0.0), 1.0)               # INSATU: 1-Fsp3
+    flex = min(rotb / 10.0, 1.0)                           # FLEX: 0..10 → 0..1
 
-    categories = [
-        f"SIZE\n(MW={mw:.0f})",
-        f"POLARITY\n(TPSA={tpsa:.0f})",
-        f"SOLUBILITY\n(LogP={logp:.1f})",
-        f"FLEXIBILITY\n(RotB={rotb})",
-        f"SATURATION\n(Fsp3={fcsp3:.2f})",
-        f"DRUGLIKENESS\n(QED={qed:.2f})",
-    ]
-    values = [size, polarity, solubility, flexibility, saturation, druglikeness]
+    categories = ["LIPO", "SIZE", "POLAR", "INSOLU", "INSATU", "FLEX"]
+    values = [lipo, size, polar, insolu, insatu, flex]
     # Close the polygon
     values_closed = values + [values[0]]
     categories_closed = categories + [categories[0]]
@@ -201,31 +192,34 @@ def plot_radar_chart(descriptors_dict):
         r=values_closed,
         theta=categories_closed,
         fill="toself",
-        fillcolor="rgba(76, 114, 176, 0.3)",
-        line=dict(color="#4C72B0", width=2),
-        marker=dict(size=6, color="#4C72B0"),
+        fillcolor="rgba(255, 99, 132, 0.25)",
+        line=dict(color="#d62728", width=2),
+        marker=dict(size=5, color="#d62728"),
     ))
 
     fig.update_layout(
-        title=dict(text="Physicochemical Profile", x=0.5, xanchor="center"),
         polar=dict(
             radialaxis=dict(
                 visible=True,
                 range=[0, 1],
                 showticklabels=False,
-                showgrid=False,
+                showgrid=True,
+                gridcolor="#e0e0e0",
                 showline=False,
+                dtick=0.2,
             ),
             angularaxis=dict(
                 showgrid=True,
-                gridcolor="rgba(0,0,0,0.1)",
+                gridcolor="#e0e0e0",
+                tickfont=dict(size=15, color="#333", family="Arial Black, Arial, sans-serif"),
             ),
         ),
         showlegend=False,
-        margin=dict(l=60, r=60, t=50, b=30),
+        margin=dict(l=120, r=120, t=120, b=120),
         paper_bgcolor="white",
         plot_bgcolor="white",
-        height=400,
+        width=500,
+        height=500,
     )
 
     return fig

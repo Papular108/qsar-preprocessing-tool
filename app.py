@@ -1337,14 +1337,21 @@ if st.session_state["active_tab"] == "explorer":
             _exp_fcsp3 = rdMolDescriptors.CalcFractionCSP3(_exp_mol)
             _exp_heavy = _exp_mol.GetNumHeavyAtoms()
             _exp_rings = _exp_mol.GetRingInfo().NumRings()
-            _exp_qed_early, _ = compute_qed(_exp_mol)
-
             # Structure & Radar Chart
             st.divider()
             st.subheader("Structure & Identifiers")
+
+            _exp_canonical = Chem.MolToSmiles(_exp_mol)
+            _exp_insatu = 1.0 - _exp_fcsp3
+            _exp_insolu_val = max(_exp_logp, -2.0) / 7.0
+
+            st.markdown(
+                '<div style="border:1px solid #e0e0e0; border-radius:10px; padding:16px; background:#fff">',
+                unsafe_allow_html=True,
+            )
             _exp_struct_col, _exp_radar_col = st.columns([1, 1])
             with _exp_struct_col:
-                _exp_png = mol_to_image(_exp_mol, size=(400, 400))
+                _exp_png = mol_to_image(_exp_mol, size=(350, 350))
                 st.image(_exp_png, use_container_width=True)
             with _exp_radar_col:
                 _radar_fig = plot_radar_chart({
@@ -1353,27 +1360,28 @@ if st.session_state["active_tab"] == "explorer":
                     "LogP": _exp_logp,
                     "RotatableBonds": _exp_rotb,
                     "FractionCsp3": _exp_fcsp3,
-                    "QED": _exp_qed_early if _exp_qed_early is not None else 0.0,
                 })
-                st.plotly_chart(_radar_fig, use_container_width=True)
+                st.plotly_chart(_radar_fig, use_container_width=True, config={"displayModeBar": False})
                 st.caption(
-                    "The radar chart shows 6 key physicochemical properties normalized to a 0-1 scale. "
-                    "An ideal drug-like molecule would form a large hexagonal shape covering most of the chart area."
+                    f"LIPO={_exp_logp:.2f} | SIZE={_exp_mw:.0f} | "
+                    f"POLAR={_exp_tpsa:.0f} | FLEX={_exp_rotb:.0f} | "
+                    f"INSATU={_exp_insatu:.2f} | INSOLU={_exp_insolu_val:.2f}"
                 )
+            st.markdown("</div>", unsafe_allow_html=True)
 
-            _exp_canonical = Chem.MolToSmiles(_exp_mol)
+            st.code(_exp_canonical, language=None)
+
             _exp_formula = rdMolDescriptors.CalcMolFormula(_exp_mol)
             _exp_inchi = MolToInchi(_exp_mol)
             _exp_inchikey = InchiToInchiKey(_exp_inchi) if _exp_inchi else "N/A"
-            _exp_id_c1, _exp_id_c2 = st.columns(2)
+            _exp_id_c1, _exp_id_c2, _exp_id_c3 = st.columns(3)
             with _exp_id_c1:
-                st.markdown("**Canonical SMILES**")
-                st.code(_exp_canonical, language=None)
                 st.markdown("**Molecular Formula**")
                 st.code(_exp_formula, language=None)
             with _exp_id_c2:
                 st.markdown("**InChI**")
                 st.code(_exp_inchi or "N/A", language=None)
+            with _exp_id_c3:
                 st.markdown("**InChIKey**")
                 st.code(_exp_inchikey, language=None)
 
