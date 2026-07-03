@@ -134,30 +134,35 @@ st.markdown(
     """<style>
     /* ── Feature tab bar styling ── */
     div[data-testid="stTabs"] > div[role="tablist"] {
-        background: #f0f2f6;
+        background: #e8eaf0;
         border-bottom: 3px solid #d0d3d9;
         gap: 0;
         padding: 0 4px;
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button {
         flex: 1 1 0;
-        font-size: 1.5rem;
-        padding: 16px 32px;
-        font-weight: 600;
-        border-bottom: 4px solid transparent;
+        font-size: 1.8rem;
+        letter-spacing: 0.5px;
+        padding: 20px 40px;
+        min-height: 70px;
+        font-weight: 700;
+        border-bottom: 5px solid transparent;
         border-radius: 10px 10px 0 0;
         background: transparent;
         transition: all 0.2s ease;
+    }
+    div[data-testid="stTabs"] > div[role="tablist"] > button p {
+        font-size: 1.8rem !important;
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button:hover {
         background: rgba(255,255,255,0.6);
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] {
-        font-weight: 800;
+        font-weight: 900;
         background: white;
-        border-bottom: 4px solid #ff4b4b;
+        border-bottom: 5px solid #ff4b4b;
         border-radius: 10px 10px 0 0;
-        box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
+        box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
     }
     </style>""",
     unsafe_allow_html=True,
@@ -169,7 +174,7 @@ st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
 tab_preprocess, tab_explorer, tab_comparison, tab_converter = st.tabs([
-    "🔬 Preprocessing", "🧬 Molecule Explorer", "⚖️ Filter Comparison", "🔄 Molecule Converter"
+    "🔬  Preprocessing", "🧬  Molecule Explorer", "⚖️  Filter Comparison", "🔄  Molecule Converter"
 ])
 
 with tab_preprocess:
