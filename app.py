@@ -132,10 +132,11 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
-    /* ── Nav card buttons: target FIRST horizontal block only ── */
-    [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] > button {
-        min-height: 120px !important;
-        font-size: 1.3rem !important;
+    /* ── Nav card buttons: scoped to nav_cards container only ── */
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_cards"])
+        [data-testid="stButton"] > button {
+        min-height: 140px !important;
+        font-size: 1.5rem !important;
         font-weight: 700 !important;
         border-radius: 12px !important;
         border: 2px solid #e0e3e8 !important;
@@ -144,14 +145,15 @@ st.markdown(
         box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
         transition: all 0.2s ease !important;
         white-space: pre-wrap !important;
-        line-height: 2.0 !important;
+        line-height: 1.6 !important;
     }
-    [data-testid="stHorizontalBlock"]:first-of-type [data-testid="stButton"] > button:hover {
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_cards"])
+        [data-testid="stButton"] > button:hover {
         transform: translateY(-3px) !important;
         box-shadow: 0 6px 20px rgba(0,0,0,0.12) !important;
         border-color: #ff4b4b !important;
     }
-    /* Active nav card — applied via wrapper div */
+    /* Active nav card */
     .nav-active [data-testid="stButton"] > button {
         background: #fafbff !important;
         border-bottom: 4px solid #ff4b4b !important;
@@ -169,25 +171,29 @@ if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "preprocessing"
 
 _NAV_CARDS = [
-    ("preprocessing", "🔬", "Preprocessing",     "Clean, filter & featurize molecules"),
-    ("explorer",      "🧬", "Molecule Explorer",  "Analyze a single molecule in detail"),
-    ("comparison",    "⚖️", "Filter Comparison",  "Compare filter settings side by side"),
-    ("converter",     "🔄", "Molecule Converter",  "Convert between SMILES, InChI & more"),
+    ("preprocessing", "🔬", "Preprocessing",     "Clean, filter & featurize"),
+    ("explorer",      "🧬", "Molecule Explorer",  "Analyze a single molecule"),
+    ("comparison",    "⚖️", "Filter Comparison",  "Compare settings side by side"),
+    ("converter",     "🔄", "Molecule Converter",  "SMILES, InChI & more"),
 ]
 
-nav_cols = st.columns(4)
-for col, (key, icon, title, subtitle) in zip(nav_cols, _NAV_CARDS):
-    is_active = st.session_state["active_tab"] == key
-    with col:
-        if is_active:
-            st.markdown('<div class="nav-active">', unsafe_allow_html=True)
-        if st.button(f"{icon}\n{title}", key=f"nav_{key}", use_container_width=True):
-            if not is_active:
-                st.session_state["active_tab"] = key
-                st.rerun()
-        if is_active:
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.caption(subtitle)
+with st.container(key="nav_cards"):
+    nav_cols = st.columns(4)
+    for col, (key, icon, title, subtitle) in zip(nav_cols, _NAV_CARDS):
+        is_active = st.session_state["active_tab"] == key
+        with col:
+            if is_active:
+                st.markdown('<div class="nav-active">', unsafe_allow_html=True)
+            if st.button(
+                f"{icon}\n{title}\n{subtitle}",
+                key=f"nav_{key}",
+                use_container_width=True,
+            ):
+                if not is_active:
+                    st.session_state["active_tab"] = key
+                    st.rerun()
+            if is_active:
+                st.markdown('</div>', unsafe_allow_html=True)
 
 st.divider()
 
