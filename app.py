@@ -133,61 +133,35 @@ def build_metadata_block(settings):
 st.markdown(
     """<style>
     /* ── Dashboard navigation cards ── */
-    .nav-card-row {
-        display: flex; gap: 16px; margin-bottom: 1.5rem;
+    .nav-card-btn button {
+        background: white !important;
+        border: 1px solid #e0e3e8 !important;
+        border-radius: 12px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
+        min-height: 160px !important;
+        padding: 24px 12px 20px 12px !important;
+        cursor: pointer !important;
+        transition: transform 0.2s ease, box-shadow 0.2s ease, border 0.2s ease !important;
     }
-    .nav-card {
-        flex: 1 1 0;
-        min-height: 160px;
-        padding: 30px 20px 24px 20px;
-        background: white;
-        border: 1px solid #e0e3e8;
-        border-radius: 12px;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
-        text-align: center;
-        cursor: pointer;
-        transition: transform 0.2s ease, box-shadow 0.2s ease;
-        display: flex; flex-direction: column; align-items: center; justify-content: center;
+    .nav-card-btn button:hover {
+        transform: scale(1.03) !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+        border-color: #c0c3c8 !important;
     }
-    .nav-card:hover {
-        transform: scale(1.03);
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    .nav-card-btn button:focus {
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
     }
-    .nav-card.active {
-        background: #fafbff;
-        border-left: 4px solid #ff4b4b;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    .nav-card-btn.active button {
+        background: #fafbff !important;
+        border-left: 4px solid #ff4b4b !important;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
     }
-    .nav-card .card-icon { margin-bottom: 12px; }
-    .nav-card .card-icon svg { width: 48px; height: 48px; }
-    .nav-card .card-title {
-        font-size: 1.3rem; font-weight: 700; color: #1a1a2e; margin-bottom: 6px;
-    }
-    .nav-card .card-subtitle {
-        font-size: 0.85rem; color: #8c8c9e; line-height: 1.3;
-    }
-    /* Hide the real st.button widgets used for click handling */
-    .nav-btn-hidden button {
-        position: absolute !important;
-        top: 0; left: 0; width: 100% !important; height: 100% !important;
-        opacity: 0 !important; cursor: pointer !important;
-    }
-    .nav-btn-hidden {
-        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
-    }
-    /* Make the column a positioning context */
-    div[data-testid="stColumn"]:has(.nav-btn-hidden) {
-        position: relative;
-    }
-    /* Subtle divider below nav */
-    .nav-divider {
-        border: none; border-top: 1px solid #e8eaf0; margin: 0 0 1.5rem 0;
+    .nav-card-btn button p {
+        text-align: center !important;
     }
     </style>""",
     unsafe_allow_html=True,
 )
-
-st.sidebar.markdown("### 📚 Documentation")
 
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
@@ -215,22 +189,18 @@ for col, (key, svg_template, title, subtitle) in zip(nav_cols, _NAV_CARDS):
     svg_html = svg_template.replace("{color}", icon_color)
     active_cls = " active" if is_active else ""
     with col:
-        st.markdown(
-            f'<div class="nav-card{active_cls}">'
-            f'  <div class="card-icon">{svg_html}</div>'
-            f'  <div class="card-title">{title}</div>'
-            f'  <div class="card-subtitle">{subtitle}</div>'
-            f'</div>',
-            unsafe_allow_html=True,
-        )
-        st.markdown('<div class="nav-btn-hidden">', unsafe_allow_html=True)
-        if st.button(title, key=f"nav_{key}", use_container_width=True):
+        st.markdown(f'<div class="nav-card-btn{active_cls}">', unsafe_allow_html=True)
+        if st.button(
+            f"{svg_html}\n\n**{title}**\n\n{subtitle}",
+            key=f"nav_{key}",
+            use_container_width=True,
+        ):
             if not is_active:
                 st.session_state["active_tab"] = key
                 st.rerun()
         st.markdown('</div>', unsafe_allow_html=True)
 
-st.markdown('<hr class="nav-divider">', unsafe_allow_html=True)
+st.divider()
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1: Preprocessing
