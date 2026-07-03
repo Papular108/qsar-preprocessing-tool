@@ -590,6 +590,52 @@ def label_activity(
     return df, skipped
 
 
+def analyze_scaffolds(mol_list):
+    """
+    Extract Murcko scaffolds and compute frequency statistics.
+
+    Parameters:
+        mol_list: list of RDKit Mol objects
+
+    Returns:
+        dict with keys: scaffold_smiles, scaffold_counts, top_scaffolds,
+              singleton_count, unique_scaffold_count
+    """
+    from rdkit.Chem.Scaffolds import MurckoScaffold
+
+    scaffolds = []
+    scaffold_to_indices = {}
+
+    for i, mol in enumerate(mol_list):
+        try:
+            core = MurckoScaffold.GetScaffoldForMol(mol)
+            smi = Chem.MolToSmiles(core)
+            if not smi:
+                smi = "No scaffold"
+        except Exception:
+            smi = "No scaffold"
+        scaffolds.append(smi)
+        scaffold_to_indices.setdefault(smi, []).append(i)
+
+    scaffold_counts = dict(
+        sorted(scaffold_to_indices.items(), key=lambda x: len(x[1]), reverse=True)
+    )
+    counts_dict = {s: len(idxs) for s, idxs in scaffold_counts.items()}
+
+    top_items = list(scaffold_counts.items())[:10]
+    top_scaffolds = [(smi, len(idxs), idxs) for smi, idxs in top_items]
+
+    singleton_count = sum(1 for idxs in scaffold_counts.values() if len(idxs) == 1)
+
+    return {
+        "scaffold_smiles": scaffolds,
+        "scaffold_counts": counts_dict,
+        "top_scaffolds": top_scaffolds,
+        "singleton_count": singleton_count,
+        "unique_scaffold_count": len(scaffold_counts),
+    }
+
+
 def run_preprocessing_pipeline(
     smiles_list,
     lipinski_max_violations=1,

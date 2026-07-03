@@ -13,7 +13,7 @@ import sascorer
 from pipeline.preprocessing import (
     run_preprocessing_pipeline, label_activity, clean_dataset,
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
-    check_pains, check_brenk, compute_qed,
+    check_pains, check_brenk, compute_qed, analyze_scaffolds,
 )
 from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol
 import altair as alt
@@ -1148,6 +1148,109 @@ if st.session_state["active_tab"] == "preprocessing":
             "from two simple descriptors: WLOGP (lipophilicity) and TPSA (polar surface area). "
             "It is a simple but widely used heuristic \u2014 not a substitute for experimental ADMET data.",
             icon="\u2139\uFE0F",
+        )
+
+    if len(result["kept_smiles"]) >= 5:
+        st.divider()
+        st.header("\U0001F3D7\uFE0F Scaffold Analysis")
+        st.caption(
+            "Murcko scaffold analysis identifies the core ring systems shared across molecules. "
+            "Scaffolds appearing frequently define the dominant chemical series in your dataset "
+            "\u2014 important for understanding structural diversity and avoiding scaffold bias in ML models."
+        )
+
+        @st.cache_data
+        def _cached_scaffolds(smiles_tuple):
+            mols = [Chem.MolFromSmiles(s) for s in smiles_tuple]
+            return analyze_scaffolds(mols)
+
+        _scaf = _cached_scaffolds(tuple(result["kept_smiles"]))
+        _n_mols = len(result["kept_smiles"])
+
+        # a) Summary metrics
+        _sc1, _sc2, _sc3 = st.columns([1, 1, 1])
+        _sc1.metric("Unique Scaffolds", _scaf["unique_scaffold_count"])
+        _top_smi, _top_cnt = list(_scaf["scaffold_counts"].items())[0]
+        _sc2.metric("Most Common Scaffold", f"{_top_cnt}x",
+                    help=_top_smi[:50])
+        _sc3.metric("Singleton Scaffolds", _scaf["singleton_count"])
+
+        # b) Scaffold frequency chart
+        _scaf_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+        _scaf_has_labels = _pl_label_map and any(l is not None for l in _scaf_labels)
+
+        _bar_data = []
+        for smi, count in list(_scaf["scaffold_counts"].items())[:15]:
+            _display = smi if len(smi) <= 30 else smi[:27] + "..."
+            if _scaf_has_labels:
+                _idxs = [i for i, s in enumerate(_scaf["scaffold_smiles"]) if s == smi]
+                for idx in _idxs:
+                    lbl = _scaf_labels[idx] if _scaf_labels[idx] else "Unlabeled"
+                    _bar_data.append({"Scaffold": _display, "Count": 1, "Activity": lbl})
+            else:
+                _bar_data.append({"Scaffold": _display, "Count": count})
+
+        _bar_df = pd.DataFrame(_bar_data)
+        if _scaf_has_labels:
+            _act_classes = [c for c in ["Active", "Intermediate", "Inactive", "Unlabeled"]
+                           if c in _bar_df["Activity"].values]
+            _act_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
+                           "Inactive": "#d62728", "Unlabeled": "#999999"}
+            _bar_chart = (
+                alt.Chart(_bar_df)
+                .mark_bar()
+                .encode(
+                    x=alt.X("sum(Count):Q", title="Count"),
+                    y=alt.Y("Scaffold:N", sort="-x", title=""),
+                    color=alt.Color("Activity:N",
+                                    scale=alt.Scale(domain=_act_classes,
+                                                    range=[_act_colors[c] for c in _act_classes])),
+                )
+                .properties(height=min(len(list(_scaf["scaffold_counts"].items())[:15]) * 28, 420))
+            )
+        else:
+            _bar_chart = (
+                alt.Chart(_bar_df)
+                .mark_bar(color="#4C72B0")
+                .encode(
+                    x=alt.X("Count:Q", title="Count"),
+                    y=alt.Y("Scaffold:N", sort="-x", title=""),
+                )
+                .properties(height=min(len(list(_scaf["scaffold_counts"].items())[:15]) * 28, 420))
+            )
+        st.subheader("Scaffold Frequency")
+        st.altair_chart(_bar_chart, use_container_width=True)
+
+        # c) Top scaffolds table
+        with st.expander("Top 10 scaffolds (click to expand)", expanded=False):
+            for _rank, (_ts_smi, _ts_cnt, _ts_idxs) in enumerate(_scaf["top_scaffolds"], 1):
+                _ts_pct = _ts_cnt / _n_mols * 100
+                _ts_left, _ts_right = st.columns([1, 2])
+                with _ts_left:
+                    if _ts_smi != "No scaffold":
+                        _ts_mol = Chem.MolFromSmiles(_ts_smi)
+                        if _ts_mol:
+                            st.image(mol_to_image(_ts_mol, size=(200, 200)), width=150)
+                with _ts_right:
+                    st.markdown(f"**#{_rank}** — {_ts_cnt} molecules ({_ts_pct:.1f}%)")
+                    st.code(_ts_smi, language=None)
+                    if _scaf_has_labels:
+                        _act_breakdown = {}
+                        for idx in _ts_idxs:
+                            lbl = _scaf_labels[idx] if _scaf_labels[idx] else "Unlabeled"
+                            _act_breakdown[lbl] = _act_breakdown.get(lbl, 0) + 1
+                        st.write(", ".join(f"{cnt} {lbl}" for lbl, cnt in _act_breakdown.items()))
+                if _rank < len(_scaf["top_scaffolds"]):
+                    st.divider()
+
+        # d) Scaffold diversity
+        st.subheader("Scaffold Diversity")
+        _diversity = _scaf["unique_scaffold_count"] / _n_mols if _n_mols > 0 else 0
+        st.metric("Diversity Score", f"{_diversity:.2f}")
+        st.progress(min(_diversity, 1.0))
+        st.caption(
+            "High scaffold diversity (>0.5) indicates a structurally diverse dataset. "
+            "Low diversity suggests the dataset is dominated by a few chemical series."
         )
 
     st.divider()
