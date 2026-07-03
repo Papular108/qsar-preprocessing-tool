@@ -133,31 +133,50 @@ def build_metadata_block(settings):
 st.markdown(
     """<style>
     /* ── Dashboard navigation cards ── */
-    .nav-card-btn button {
-        background: white !important;
+    .nav-card {
+        background: white;
+        border: 1px solid #e0e3e8;
+        border-radius: 12px;
+        padding: 24px 16px;
+        text-align: center;
+        min-height: 140px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    }
+    .nav-card:hover {
+        transform: translateY(-3px);
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .nav-card.active {
+        border-bottom: 4px solid #ff4b4b;
+        background: #fafbff;
+        box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    }
+    .nav-icon { font-size: 3rem; margin-bottom: 8px; }
+    .nav-title { font-size: 1.2rem; font-weight: 700; color: #1a1a2e; margin-bottom: 4px; }
+    .nav-subtitle { font-size: 0.85rem; color: #666; font-weight: 400; }
+    /* Minimal "open" buttons below each card */
+    .nav-open-btn button {
+        background: transparent !important;
         border: 1px solid #e0e3e8 !important;
-        border-radius: 12px !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
-        min-height: 160px !important;
-        padding: 24px 12px 20px 12px !important;
-        cursor: pointer !important;
-        transition: transform 0.2s ease, box-shadow 0.2s ease, border 0.2s ease !important;
+        color: #666 !important;
+        font-size: 0.8rem !important;
+        padding: 4px 12px !important;
+        border-radius: 6px !important;
+        margin-top: 4px !important;
     }
-    .nav-card-btn button:hover {
-        transform: scale(1.03) !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
-        border-color: #c0c3c8 !important;
+    .nav-open-btn button:hover {
+        background: #f0f2f6 !important;
+        color: #1a1a2e !important;
     }
-    .nav-card-btn button:focus {
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
-    }
-    .nav-card-btn.active button {
-        background: #fafbff !important;
-        border-left: 4px solid #ff4b4b !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
-    }
-    .nav-card-btn button p {
-        text-align: center !important;
+    .nav-open-btn.active button {
+        background: #ff4b4b !important;
+        border-color: #ff4b4b !important;
+        color: white !important;
     }
     </style>""",
     unsafe_allow_html=True,
@@ -170,31 +189,29 @@ st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/v
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "preprocessing"
 
-_SVG_PREPROCESSING = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 6h20v8l-8 10v12l-4 4V24L14 14V6z" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="{color}" fill-opacity="0.1"/><circle cx="34" cy="10" r="3" fill="{color}" fill-opacity="0.3"/><circle cx="28" cy="8" r="2" fill="{color}" fill-opacity="0.4"/><circle cx="20" cy="9" r="2.5" fill="{color}" fill-opacity="0.35"/></svg>'
-_SVG_EXPLORER = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M24 10l8.66 5v10L24 30l-8.66-5V15z" stroke="{color}" stroke-width="2" stroke-linejoin="round" fill="{color}" fill-opacity="0.08"/><circle cx="24" cy="20" r="12" stroke="{color}" stroke-width="2.5" fill="none"/><line x1="33" y1="29" x2="42" y2="38" stroke="{color}" stroke-width="3" stroke-linecap="round"/></svg>'
-_SVG_COMPARISON = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><rect x="4" y="8" width="16" height="32" rx="3" stroke="{color}" stroke-width="2.5" fill="{color}" fill-opacity="0.08"/><rect x="28" y="8" width="16" height="32" rx="3" stroke="{color}" stroke-width="2.5" fill="{color}" fill-opacity="0.08"/><line x1="8" y1="16" x2="16" y2="16" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="22" x2="14" y2="22" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="8" y1="28" x2="16" y2="28" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="32" y1="16" x2="40" y2="16" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="32" y1="22" x2="38" y2="22" stroke="{color}" stroke-width="2" stroke-linecap="round"/><line x1="32" y1="28" x2="40" y2="28" stroke="{color}" stroke-width="2" stroke-linecap="round"/><path d="M22 20l2 2 2-2M22 28l2-2 2 2" stroke="{color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-_SVG_CONVERTER = '<svg viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14 18h20l-6-6" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M34 30H14l6 6" stroke="{color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></svg>'
-
 _NAV_CARDS = [
-    ("preprocessing", _SVG_PREPROCESSING, "Preprocessing",      "Clean, filter & featurize molecules"),
-    ("explorer",      _SVG_EXPLORER,      "Molecule Explorer",   "Analyze a single molecule in detail"),
-    ("comparison",    _SVG_COMPARISON,     "Filter Comparison",   "Compare filter settings side by side"),
-    ("converter",     _SVG_CONVERTER,      "Molecule Converter",  "Convert between SMILES, InChI & more"),
+    ("preprocessing", "🔬", "Preprocessing",     "Clean, filter & featurize molecules"),
+    ("explorer",      "🧬", "Molecule Explorer",  "Analyze a single molecule in detail"),
+    ("comparison",    "⚖️", "Filter Comparison",  "Compare filter settings side by side"),
+    ("converter",     "🔄", "Molecule Converter",  "Convert between SMILES, InChI & more"),
 ]
 
 nav_cols = st.columns(4)
-for col, (key, svg_template, title, subtitle) in zip(nav_cols, _NAV_CARDS):
+for col, (key, icon, title, subtitle) in zip(nav_cols, _NAV_CARDS):
     is_active = st.session_state["active_tab"] == key
-    icon_color = "#ff4b4b" if is_active else "#4A90D9"
-    svg_html = svg_template.replace("{color}", icon_color)
     active_cls = " active" if is_active else ""
+    btn_label = f"● {title}" if is_active else f"Open {title}"
     with col:
-        st.markdown(f'<div class="nav-card-btn{active_cls}">', unsafe_allow_html=True)
-        if st.button(
-            f"{svg_html}\n\n**{title}**\n\n{subtitle}",
-            key=f"nav_{key}",
-            use_container_width=True,
-        ):
+        st.markdown(
+            f'<div class="nav-card{active_cls}">'
+            f'<div class="nav-icon">{icon}</div>'
+            f'<div class="nav-title">{title}</div>'
+            f'<div class="nav-subtitle">{subtitle}</div>'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+        st.markdown(f'<div class="nav-open-btn{active_cls}">', unsafe_allow_html=True)
+        if st.button(btn_label, key=f"nav_{key}", use_container_width=True):
             if not is_active:
                 st.session_state["active_tab"] = key
                 st.rerun()
