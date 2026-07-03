@@ -141,28 +141,37 @@ st.markdown(
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button {
         flex: 1 1 0;
-        font-size: 1.8rem;
-        letter-spacing: 0.5px;
-        padding: 20px 40px;
-        min-height: 70px;
-        font-weight: 700;
+        padding: 20px 40px !important;
+        min-height: 70px !important;
         border-bottom: 5px solid transparent;
         border-radius: 10px 10px 0 0;
         background: transparent;
         transition: all 0.2s ease;
     }
-    div[data-testid="stTabs"] > div[role="tablist"] > button p {
+    div[data-testid="stTabs"] > div[role="tablist"] > button > div > p,
+    div[data-testid="stTabs"] > div[role="tablist"] > button > div,
+    div[data-testid="stTabs"] > div[role="tablist"] > button p,
+    div[data-testid="stTabs"] > div[role="tablist"] > button span,
+    div[data-testid="stTabs"] > div[role="tablist"] > button {
         font-size: 1.8rem !important;
+        font-weight: 700 !important;
+        letter-spacing: 0.5px !important;
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button:hover {
         background: rgba(255,255,255,0.6);
     }
     div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] {
-        font-weight: 900;
+        font-weight: 900 !important;
         background: white;
         border-bottom: 5px solid #ff4b4b;
         border-radius: 10px 10px 0 0;
         box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    }
+    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] > div > p,
+    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] > div,
+    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] p,
+    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] span {
+        font-weight: 900 !important;
     }
     </style>""",
     unsafe_allow_html=True,
