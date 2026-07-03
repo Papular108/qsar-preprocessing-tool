@@ -152,6 +152,14 @@ def generate_methods_text(settings):
             "it was not used as a filter."
         )
 
+    # ESOL solubility (always computed for kept molecules)
+    sentences.append(
+        "Water solubility was estimated using the ESOL model "
+        "(Delaney, J.S., 2004. ESOL: Estimating aqueous solubility directly "
+        "from molecular structure. Journal of Chemical Information and "
+        "Computer Sciences, 44(3), pp.1000-1005)."
+    )
+
     # Boiled-Egg analysis
     if settings.get("enable_boiled_egg"):
         sentences.append(

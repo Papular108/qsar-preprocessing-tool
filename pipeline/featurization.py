@@ -77,6 +77,51 @@ def compute_fingerprint(mol, fp_type="morgan", radius=2, n_bits=2048):
 
 
 
+def compute_esol(mol):
+    """
+    Predict aqueous solubility using the ESOL model (Delaney, 2004).
+
+    LogS = 0.16 - 0.63*cLogP - 0.0062*MW + 0.066*RotBonds - 0.74*AromaticProportion
+
+    Parameters:
+        mol: RDKit Mol object
+
+    Returns:
+        tuple: (log_s, solubility_mg_ml, solubility_mol_l, solubility_class, error)
+    """
+    try:
+        clogp = Descriptors.MolLogP(mol)
+        mw = Descriptors.MolWt(mol)
+        rot_bonds = Descriptors.NumRotatableBonds(mol)
+        n_heavy = mol.GetNumHeavyAtoms()
+        if n_heavy == 0:
+            return None, None, None, None, "No heavy atoms"
+        n_aromatic = sum(1 for atom in mol.GetAtoms() if atom.GetIsAromatic())
+        aromatic_proportion = n_aromatic / n_heavy
+
+        log_s = 0.16 - 0.63 * clogp - 0.0062 * mw + 0.066 * rot_bonds - 0.74 * aromatic_proportion
+
+        solubility_mol_l = 10 ** log_s
+        solubility_mg_ml = solubility_mol_l * mw
+
+        if log_s > 0:
+            sol_class = "Highly soluble"
+        elif log_s > -1:
+            sol_class = "Soluble"
+        elif log_s > -2:
+            sol_class = "Moderately soluble"
+        elif log_s > -4:
+            sol_class = "Slightly soluble"
+        elif log_s > -6:
+            sol_class = "Insoluble"
+        else:
+            sol_class = "Poorly soluble"
+
+        return log_s, solubility_mg_ml, solubility_mol_l, sol_class, None
+    except Exception as e:
+        return None, None, None, None, f"ESOL computation failed: {str(e)}"
+
+
 def featurize_dataset(mol_list, fp_type="morgan", radius=2, n_bits=2048):
     """
     Compute descriptors and fingerprints for a list of molecules,

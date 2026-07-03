@@ -15,7 +15,7 @@ from pipeline.preprocessing import (
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
     check_pains, check_brenk, compute_qed,
 )
-from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint
+from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol
 import altair as alt
 from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart
 from pipeline.methodology import generate_methods_text
@@ -805,8 +805,19 @@ if st.session_state["active_tab"] == "preprocessing":
             kept_data["pActivity"] = [_pl_pval_map.get(s) for s in result["kept_smiles"]]
         if _pl_pchembl_map:
             kept_data["pchembl_value"] = [_pl_pchembl_map.get(s) for s in result["kept_smiles"]]
+        # Compute ESOL LogS for kept molecules
+        _esol_logs_list = []
+        for _smi in result["kept_smiles"]:
+            _mol_tmp = Chem.MolFromSmiles(_smi)
+            if _mol_tmp:
+                _ls, _, _, _, _err = compute_esol(_mol_tmp)
+                _esol_logs_list.append(round(_ls, 2) if _ls is not None else None)
+            else:
+                _esol_logs_list.append(None)
+        kept_data["ESOL_LogS"] = _esol_logs_list
+
         kept_df = pd.DataFrame(kept_data)
-        extra_kept = [c for c in ["SA_Score", "QED_Score", "Activity_Label", "pActivity", "pchembl_value"] if c in kept_df.columns]
+        extra_kept = [c for c in ["ESOL_LogS", "SA_Score", "QED_Score", "Activity_Label", "pActivity", "pchembl_value"] if c in kept_df.columns]
 
         _pl_settings = st.session_state.get("pipeline_settings", {})
         metadata = build_metadata_block({
@@ -1485,6 +1496,37 @@ if st.session_state["active_tab"] == "explorer":
                     st.warning(f"Brenk alert: {_exp_brenk_name}")
                 else:
                     st.success("No Brenk alerts detected")
+
+            # Water Solubility (ESOL)
+            st.divider()
+            st.subheader("Water Solubility (ESOL)")
+            _esol_logs, _esol_mg, _esol_mol, _esol_class, _esol_err = compute_esol(_exp_mol)
+            if _esol_err:
+                st.error(_esol_err)
+            else:
+                _esol_left, _esol_right = st.columns([1, 1])
+                with _esol_left:
+                    st.metric("LogS (log mol/L)", f"{_esol_logs:.2f}")
+                    _class_colors = {
+                        "Highly soluble": "green", "Soluble": "green",
+                        "Moderately soluble": "blue",
+                        "Slightly soluble": "orange",
+                        "Insoluble": "red", "Poorly soluble": "red",
+                    }
+                    _cc = _class_colors.get(_esol_class, "grey")
+                    st.markdown(f"Class: :{_cc}[**{_esol_class}**]")
+                with _esol_right:
+                    st.metric("Solubility (mg/mL)", f"{_esol_mg:.4g}")
+                    st.metric("Solubility (mol/L)", f"{_esol_mol:.4g}")
+                # Gauge bar: LogS from -8 to +1
+                _gauge_val = max(min((_esol_logs + 8) / 9.0, 1.0), 0.0)
+                st.markdown("**Solubility scale** (LogS: -8 to +1)")
+                st.progress(_gauge_val)
+                st.caption(
+                    "LogS predicted using the ESOL model (Delaney, 2004). "
+                    "LogS = log\u2081\u2080 of aqueous solubility in mol/L. "
+                    "Higher values indicate better water solubility."
+                )
 
             # Fingerprint Preview
             st.divider()
