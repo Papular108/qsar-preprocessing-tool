@@ -153,3 +153,79 @@ def plot_boiled_egg(mols_df, label_col=None):
     )
 
     return chart, n_gi, n_bbb, df
+
+
+def plot_radar_chart(descriptors_dict):
+    """
+    Create a radar/spider chart of 6 physicochemical properties.
+
+    Parameters:
+        descriptors_dict (dict): must contain keys: MW, TPSA, LogP,
+            RotatableBonds, FractionCsp3, QED
+
+    Returns:
+        plotly Figure
+    """
+    import plotly.graph_objects as go
+
+    mw = descriptors_dict["MW"]
+    tpsa = descriptors_dict["TPSA"]
+    logp = descriptors_dict["LogP"]
+    rotb = descriptors_dict["RotatableBonds"]
+    fcsp3 = descriptors_dict["FractionCsp3"]
+    qed = descriptors_dict["QED"]
+
+    # Normalize to 0-1
+    size = min(mw / 500.0, 1.0)
+    polarity = min(tpsa / 140.0, 1.0)
+    # Invert LogP: high LogP → low solubility → low value
+    solubility = min(max(1.0 - max(logp, -2.0) / 7.0, 0.0), 1.0)
+    flexibility = min(rotb / 10.0, 1.0)
+    saturation = min(max(fcsp3, 0.0), 1.0)
+    druglikeness = min(max(qed, 0.0), 1.0)
+
+    categories = [
+        f"SIZE\n(MW={mw:.0f})",
+        f"POLARITY\n(TPSA={tpsa:.0f})",
+        f"SOLUBILITY\n(LogP={logp:.1f})",
+        f"FLEXIBILITY\n(RotB={rotb})",
+        f"SATURATION\n(Fsp3={fcsp3:.2f})",
+        f"DRUGLIKENESS\n(QED={qed:.2f})",
+    ]
+    values = [size, polarity, solubility, flexibility, saturation, druglikeness]
+    # Close the polygon
+    values_closed = values + [values[0]]
+    categories_closed = categories + [categories[0]]
+
+    fig = go.Figure(data=go.Scatterpolar(
+        r=values_closed,
+        theta=categories_closed,
+        fill="toself",
+        fillcolor="rgba(76, 114, 176, 0.3)",
+        line=dict(color="#4C72B0", width=2),
+        marker=dict(size=6, color="#4C72B0"),
+    ))
+
+    fig.update_layout(
+        title=dict(text="Physicochemical Profile", x=0.5, xanchor="center"),
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1],
+                showticklabels=False,
+                showgrid=False,
+                showline=False,
+            ),
+            angularaxis=dict(
+                showgrid=True,
+                gridcolor="rgba(0,0,0,0.1)",
+            ),
+        ),
+        showlegend=False,
+        margin=dict(l=60, r=60, t=50, b=30),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        height=400,
+    )
+
+    return fig

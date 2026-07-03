@@ -17,7 +17,7 @@ from pipeline.preprocessing import (
 )
 from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint
 import altair as alt
-from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg
+from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart
 from pipeline.methodology import generate_methods_text
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
 from sklearn.preprocessing import StandardScaler
@@ -1326,30 +1326,7 @@ if st.session_state["active_tab"] == "explorer":
         if _exp_mol is None:
             st.error(f"Could not parse SMILES: `{_explorer_input.strip()}`")
         else:
-            # Structure & Identifiers
-            st.divider()
-            st.subheader("Structure & Identifiers")
-            _exp_img_col, _exp_id_col = st.columns([1, 2])
-            with _exp_img_col:
-                _exp_png = mol_to_image(_exp_mol, size=(400, 400))
-                st.image(_exp_png, use_container_width=True)
-            with _exp_id_col:
-                _exp_canonical = Chem.MolToSmiles(_exp_mol)
-                _exp_formula = rdMolDescriptors.CalcMolFormula(_exp_mol)
-                _exp_inchi = MolToInchi(_exp_mol)
-                _exp_inchikey = InchiToInchiKey(_exp_inchi) if _exp_inchi else "N/A"
-                st.markdown("**Canonical SMILES**")
-                st.code(_exp_canonical, language=None)
-                st.markdown("**Molecular Formula**")
-                st.code(_exp_formula, language=None)
-                st.markdown("**InChI**")
-                st.code(_exp_inchi or "N/A", language=None)
-                st.markdown("**InChIKey**")
-                st.code(_exp_inchikey, language=None)
-
-            # Physicochemical Properties
-            st.divider()
-            st.subheader("Physicochemical Properties")
+            # Compute descriptors early (needed for radar chart)
             _exp_mw = Descriptors.MolWt(_exp_mol)
             _exp_logp = Descriptors.MolLogP(_exp_mol)
             _exp_tpsa = Descriptors.TPSA(_exp_mol)
@@ -1360,6 +1337,49 @@ if st.session_state["active_tab"] == "explorer":
             _exp_fcsp3 = rdMolDescriptors.CalcFractionCSP3(_exp_mol)
             _exp_heavy = _exp_mol.GetNumHeavyAtoms()
             _exp_rings = _exp_mol.GetRingInfo().NumRings()
+            _exp_qed_early, _ = compute_qed(_exp_mol)
+
+            # Structure & Radar Chart
+            st.divider()
+            st.subheader("Structure & Identifiers")
+            _exp_struct_col, _exp_radar_col = st.columns([1, 1])
+            with _exp_struct_col:
+                _exp_png = mol_to_image(_exp_mol, size=(400, 400))
+                st.image(_exp_png, use_container_width=True)
+            with _exp_radar_col:
+                _radar_fig = plot_radar_chart({
+                    "MW": _exp_mw,
+                    "TPSA": _exp_tpsa,
+                    "LogP": _exp_logp,
+                    "RotatableBonds": _exp_rotb,
+                    "FractionCsp3": _exp_fcsp3,
+                    "QED": _exp_qed_early if _exp_qed_early is not None else 0.0,
+                })
+                st.plotly_chart(_radar_fig, use_container_width=True)
+                st.caption(
+                    "The radar chart shows 6 key physicochemical properties normalized to a 0-1 scale. "
+                    "An ideal drug-like molecule would form a large hexagonal shape covering most of the chart area."
+                )
+
+            _exp_canonical = Chem.MolToSmiles(_exp_mol)
+            _exp_formula = rdMolDescriptors.CalcMolFormula(_exp_mol)
+            _exp_inchi = MolToInchi(_exp_mol)
+            _exp_inchikey = InchiToInchiKey(_exp_inchi) if _exp_inchi else "N/A"
+            _exp_id_c1, _exp_id_c2 = st.columns(2)
+            with _exp_id_c1:
+                st.markdown("**Canonical SMILES**")
+                st.code(_exp_canonical, language=None)
+                st.markdown("**Molecular Formula**")
+                st.code(_exp_formula, language=None)
+            with _exp_id_c2:
+                st.markdown("**InChI**")
+                st.code(_exp_inchi or "N/A", language=None)
+                st.markdown("**InChIKey**")
+                st.code(_exp_inchikey, language=None)
+
+            # Physicochemical Properties
+            st.divider()
+            st.subheader("Physicochemical Properties")
             _exp_props = [
                 ("MW (g/mol)", f"{_exp_mw:.2f}"), ("LogP", f"{_exp_logp:.2f}"),
                 ("TPSA (A^2)", f"{_exp_tpsa:.1f}"), ("HBD", str(_exp_hbd)),

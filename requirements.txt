@@ -4,4 +4,5 @@ MolVS==0.1.1
 pandas==2.3.3
 numpy==2.2.6
 openpyxl==3.1.5
+plotly>=5.0.0
 pytest==9.1.1
