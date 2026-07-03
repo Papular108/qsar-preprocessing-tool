@@ -17,7 +17,7 @@ from pipeline.preprocessing import (
 )
 from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint
 import altair as alt
-from pipeline.visualization import mol_to_base64_png, mol_to_image
+from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg
 from pipeline.methodology import generate_methods_text
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
 from sklearn.preprocessing import StandardScaler
@@ -1073,6 +1073,72 @@ if st.session_state["active_tab"] == "preprocessing":
                 )
 
 
+    if len(result["kept_smiles"]) >= 2:
+        st.divider()
+        st.header("\U0001F95A Boiled-Egg Diagram")
+
+        @st.cache_data
+        def _cached_boiled_egg(smiles_tuple, labels_tuple):
+            import pandas as pd
+            from rdkit import Chem
+            from rdkit.Chem import Descriptors
+            rows = []
+            for i, smi in enumerate(smiles_tuple):
+                mol = Chem.MolFromSmiles(smi)
+                if mol is None:
+                    continue
+                row = {
+                    "SMILES": smi,
+                    "WLOGP": Descriptors.MolLogP(mol),
+                    "TPSA": Descriptors.TPSA(mol),
+                }
+                if labels_tuple and labels_tuple[i]:
+                    row["Activity"] = labels_tuple[i]
+                rows.append(row)
+            return pd.DataFrame(rows)
+
+        _be_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+        _be_has_labels = _pl_label_map and any(l is not None for l in _be_labels)
+        _be_df = _cached_boiled_egg(
+            tuple(result["kept_smiles"]),
+            tuple(_be_labels) if _be_has_labels else None,
+        )
+
+        _be_chart, _be_n_gi, _be_n_bbb, _be_result_df = plot_boiled_egg(
+            _be_df, label_col="Activity" if _be_has_labels else None,
+        )
+        st.altair_chart(_be_chart, use_container_width=True)
+
+        st.caption(
+            "Molecules inside the white ellipse are predicted to be passively absorbed by the GI tract. "
+            "Molecules inside the yellow ellipse are predicted to be brain-penetrant (BBB+)."
+        )
+        st.write(f"**{_be_n_gi}** molecules in GI absorption zone, **{_be_n_bbb}** molecules in BBB zone")
+
+        with st.expander("Molecules by zone"):
+            _gi_mols = _be_result_df[_be_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+            _bbb_mols = _be_result_df[_be_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+            _be_z1, _be_z2 = st.columns(2)
+            with _be_z1:
+                st.markdown("**GI absorption zone**")
+                if len(_gi_mols):
+                    st.dataframe(_gi_mols, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No molecules in GI absorption zone.")
+            with _be_z2:
+                st.markdown("**BBB permeability zone**")
+                if len(_bbb_mols):
+                    st.dataframe(_bbb_mols, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No molecules in BBB permeability zone.")
+
+        st.info(
+            "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
+            "from two simple descriptors: WLOGP (lipophilicity) and TPSA (polar surface area). "
+            "It is a simple but widely used heuristic \u2014 not a substitute for experimental ADMET data.",
+            icon="\u2139\uFE0F",
+        )
+
     st.divider()
 
     st.header("Featurization")
@@ -1215,6 +1281,8 @@ if st.session_state["active_tab"] == "preprocessing":
             settings["fp_type"] = fp_type
             settings["n_bits"] = n_bits
             settings["radius"] = radius
+            if settings.get("kept_count", 0) >= 2:
+                settings["enable_boiled_egg"] = True
             st.session_state["methods_text"] = generate_methods_text(settings)
 
     if "methods_text" in st.session_state:

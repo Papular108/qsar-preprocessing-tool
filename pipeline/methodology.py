@@ -152,6 +152,15 @@ def generate_methods_text(settings):
             "it was not used as a filter."
         )
 
+    # Boiled-Egg analysis
+    if settings.get("enable_boiled_egg"):
+        sentences.append(
+            "Passive gastrointestinal absorption and blood-brain barrier permeability "
+            "were estimated using the BOILED-Egg model (Daina & Zoete, 2016), "
+            "plotting WLOGP against TPSA to classify compounds into GI-absorbed "
+            "and BBB-penetrant zones."
+        )
+
     # Featurization
     fp_type = settings.get("fp_type")
     if fp_type and fp_type in _FP_SENTENCES:
