@@ -132,46 +132,41 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
-    /* ── Feature tab bar styling ── */
-    div[data-testid="stTabs"] > div[role="tablist"] {
+    /* ── SwissADME-style navigation bar ── */
+    div.nav-bar-container {
+        display: flex;
+        gap: 8px;
+        padding: 8px 4px;
         background: #e8eaf0;
-        border-bottom: 3px solid #d0d3d9;
-        gap: 0;
-        padding: 0 4px;
+        border-radius: 12px;
+        margin-bottom: 1.5rem;
     }
-    div[data-testid="stTabs"] > div[role="tablist"] > button {
-        flex: 1 1 0;
-        padding: 20px 40px !important;
-        min-height: 70px !important;
-        border-bottom: 5px solid transparent;
-        border-radius: 10px 10px 0 0;
-        background: transparent;
-        transition: all 0.2s ease;
+    /* Style the st.button elements used as nav cards */
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .nav-active button {
+        background: white !important;
+        border: none !important;
+        border-bottom: 5px solid #ff4b4b !important;
+        box-shadow: 0 2px 12px rgba(0,0,0,0.10) !important;
+        border-radius: 10px !important;
     }
-    div[data-testid="stTabs"] > div[role="tablist"] > button > div > p,
-    div[data-testid="stTabs"] > div[role="tablist"] > button > div,
-    div[data-testid="stTabs"] > div[role="tablist"] > button p,
-    div[data-testid="stTabs"] > div[role="tablist"] > button span,
-    div[data-testid="stTabs"] > div[role="tablist"] > button {
-        font-size: 1.8rem !important;
-        font-weight: 700 !important;
-        letter-spacing: 0.5px !important;
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .nav-inactive button {
+        background: transparent !important;
+        border: none !important;
+        border-bottom: 5px solid transparent !important;
+        border-radius: 10px !important;
     }
-    div[data-testid="stTabs"] > div[role="tablist"] > button:hover {
-        background: rgba(255,255,255,0.6);
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] .nav-inactive button:hover {
+        background: rgba(255,255,255,0.5) !important;
     }
-    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] {
-        font-weight: 900 !important;
-        background: white;
-        border-bottom: 5px solid #ff4b4b;
-        border-radius: 10px 10px 0 0;
-        box-shadow: 0 -2px 12px rgba(0,0,0,0.1);
+    /* Common nav button styling */
+    .nav-active button, .nav-inactive button {
+        width: 100% !important;
+        padding: 16px 8px 12px 8px !important;
+        min-height: 90px !important;
+        cursor: pointer !important;
     }
-    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] > div > p,
-    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] > div,
-    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] p,
-    div[data-testid="stTabs"] > div[role="tablist"] > button[aria-selected="true"] span {
-        font-weight: 900 !important;
+    .nav-active button p, .nav-inactive button p {
+        text-align: center !important;
     }
     </style>""",
     unsafe_allow_html=True,
@@ -182,11 +177,35 @@ st.sidebar.markdown("### 📚 Documentation")
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
-tab_preprocess, tab_explorer, tab_comparison, tab_converter = st.tabs([
-    "🔬  Preprocessing", "🧬  Molecule Explorer", "⚖️  Filter Comparison", "🔄  Molecule Converter"
-])
+# ── Navigation bar ──
+if "active_tab" not in st.session_state:
+    st.session_state["active_tab"] = "preprocessing"
 
-with tab_preprocess:
+_NAV_ITEMS = [
+    ("preprocessing", "🔬", "Preprocessing"),
+    ("explorer",      "🧬", "Molecule Explorer"),
+    ("comparison",    "⚖️", "Filter Comparison"),
+    ("converter",     "🔄", "Molecule Converter"),
+]
+
+nav_cols = st.columns(len(_NAV_ITEMS))
+for col, (key, icon, label) in zip(nav_cols, _NAV_ITEMS):
+    is_active = st.session_state["active_tab"] == key
+    css_class = "nav-active" if is_active else "nav-inactive"
+    with col:
+        st.markdown(f'<div class="{css_class}">', unsafe_allow_html=True)
+        if st.button(f"{icon}\n\n**{label}**", key=f"nav_{key}", use_container_width=True):
+            if not is_active:
+                st.session_state["active_tab"] = key
+                st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
+
+st.markdown("---")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 1: Preprocessing
+# ══════════════════════════════════════════════════════════════════════════════
+if st.session_state["active_tab"] == "preprocessing":
 
     st.header("Batch preprocessing")
     st.write("Upload a file with one SMILES string per line, or paste them below.")
@@ -1209,7 +1228,7 @@ with tab_preprocess:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2: Molecule Explorer
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_explorer:
+if st.session_state["active_tab"] == "explorer":
     st.header("Molecule Explorer")
     st.write("Enter a SMILES string to see a full physicochemical and druglikeness profile.")
 
@@ -1394,7 +1413,7 @@ with tab_explorer:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: Filter Comparison
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_comparison:
+if st.session_state["active_tab"] == "comparison":
     st.header("Filter Comparison")
     st.write(
         "Run the preprocessing pipeline with two different filter configurations on the same "
@@ -1528,7 +1547,7 @@ with tab_comparison:
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 4: Molecule Converter
 # ══════════════════════════════════════════════════════════════════════════════
-with tab_converter:
+if st.session_state["active_tab"] == "converter":
     st.header("Molecule Converter")
     st.write(
         "Convert between SMILES, InChI, InChIKey, and molecular formula. "
