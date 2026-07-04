@@ -1115,9 +1115,11 @@ if st.session_state["active_tab"] == "preprocessing":
             tuple(_be_labels) if _be_has_labels else None,
         )
 
-        _be_chart, _be_n_gi, _be_n_bbb, _be_result_df = plot_boiled_egg(
+        _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(
             _be_df, label_col="Activity" if _be_has_labels else None,
         )
+        if _be_sampled:
+            st.info(f"Showing 300 of {len(_be_df)} molecules")
         st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False})
 
         st.caption(
