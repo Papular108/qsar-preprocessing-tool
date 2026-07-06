@@ -172,6 +172,68 @@ def plot_boiled_egg(mols_df, label_col=None):
     return fig, n_gi, n_bbb, df, sampled
 
 
+def plot_mini_radar(descriptors_dict):
+    """
+    Create a small radar chart for molecule cards (250x250).
+    Same 6 axes and normalization as plot_radar_chart, but minimal chrome.
+    """
+    import plotly.graph_objects as go
+
+    mw = descriptors_dict["MW"]
+    tpsa = descriptors_dict["TPSA"]
+    logp = descriptors_dict["LogP"]
+    rotb = descriptors_dict["RotatableBonds"]
+    fcsp3 = descriptors_dict["FractionCsp3"]
+
+    lipo = np.clip((logp - (-2)) / (5 - (-2)), 0, 1)
+    size = np.clip(mw / 500.0, 0, 1)
+    polar = np.clip(tpsa / 140.0, 0, 1)
+    insolu = np.clip((logp - (-2)) / (5 - (-2)), 0, 1)
+    insatu = np.clip(1.0 - fcsp3, 0, 1)
+    flex = np.clip(rotb / 9.0, 0, 1)
+
+    categories = ["LIPO", "SIZE", "POLAR", "INSOLU", "INSATU", "FLEX"]
+    values = [lipo, size, polar, insolu, insatu, flex]
+    values_closed = values + [values[0]]
+    categories_closed = categories + [categories[0]]
+
+    fig = go.Figure(data=go.Scatterpolar(
+        r=values_closed,
+        theta=categories_closed,
+        fill="toself",
+        fillcolor="rgba(255, 99, 132, 0.35)",
+        line=dict(color="#d62728", width=2),
+        marker=dict(size=3, color="#d62728"),
+    ))
+
+    fig.update_layout(
+        polar=dict(
+            radialaxis=dict(
+                visible=True,
+                range=[0, 1],
+                showticklabels=False,
+                showgrid=True,
+                gridcolor="#e0e0e0",
+                showline=False,
+                dtick=0.2,
+            ),
+            angularaxis=dict(
+                showgrid=True,
+                gridcolor="#e0e0e0",
+                tickfont=dict(size=8, color="#333"),
+            ),
+        ),
+        showlegend=False,
+        margin=dict(l=30, r=30, t=30, b=30),
+        paper_bgcolor="white",
+        plot_bgcolor="white",
+        width=250,
+        height=250,
+    )
+
+    return fig
+
+
 def plot_radar_chart(descriptors_dict):
     """
     Create a SwissADME-style radar/spider chart of 6 physicochemical properties.

@@ -17,7 +17,7 @@ from pipeline.preprocessing import (
 )
 from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol
 import altair as alt
-from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart
+from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
 from pipeline.methodology import generate_methods_text
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
 from sklearn.preprocessing import StandardScaler
@@ -61,6 +61,20 @@ def _cached_descriptors(smiles_tuple):
         if mol:
             rows.append(compute_descriptors(mol))
     return pd.DataFrame(rows)
+
+
+@st.cache_data
+def _cached_preview_descriptors(smiles_tuple):
+    """Compute descriptors + FractionCsp3 for preview molecule cards."""
+    results = []
+    for smi in smiles_tuple:
+        mol = Chem.MolFromSmiles(smi)
+        if mol:
+            d = compute_descriptors(mol)
+            d["FractionCsp3"] = rdMolDescriptors.CalcFractionCSP3(mol)
+            d["SMILES"] = smi
+            results.append(d)
+    return results
 
 
 @st.cache_data
@@ -860,11 +874,40 @@ if st.session_state["active_tab"] == "preprocessing":
                 mime="text/csv",
             )
             with st.expander("View kept molecules (first 20)"):
-                preview_records = kept_df.head(20).to_dict("records")
-                st.markdown(
-                    _mol_table_html(preview_records, "SMILES", extra_kept),
-                    unsafe_allow_html=True,
-                )
+                _preview_smiles = list(kept_df["SMILES"].head(20))
+                _preview_descs = _cached_preview_descriptors(tuple(_preview_smiles))
+                _preview_labels = {s: _pl_label_map.get(s) for s in _preview_smiles} if _pl_label_map else {}
+                for _card_i in range(0, len(_preview_descs), 2):
+                    _card_cols = st.columns(2)
+                    for _ci, _col in enumerate(_card_cols):
+                        _idx = _card_i + _ci
+                        if _idx >= len(_preview_descs):
+                            break
+                        _desc = _preview_descs[_idx]
+                        _smi = _desc["SMILES"]
+                        with _col:
+                            _trunc_smi = _smi[:40] + ("..." if len(_smi) > 40 else "")
+                            st.code(_trunc_smi, language=None)
+                            _img_col, _radar_col = st.columns([1, 1])
+                            with _img_col:
+                                _card_mol = Chem.MolFromSmiles(_smi)
+                                if _card_mol:
+                                    st.image(mol_to_image(_card_mol, size=(150, 150)), width=150)
+                            with _radar_col:
+                                _mini_fig = plot_mini_radar(_desc)
+                                st.plotly_chart(_mini_fig, use_container_width=True, config={"displayModeBar": False})
+                            st.caption(
+                                f"MW={_desc['MW']:.0f} | LogP={_desc['LogP']:.2f} | TPSA={_desc['TPSA']:.0f}"
+                            )
+                            _label = _preview_labels.get(_smi)
+                            if _label:
+                                _badge_color = {"Active": "green", "Intermediate": "orange", "Inactive": "red"}.get(_label, "gray")
+                                st.markdown(
+                                    f"<span style='background:{_badge_color};color:white;padding:2px 8px;border-radius:4px;font-size:12px'>{_label}</span>",
+                                    unsafe_allow_html=True,
+                                )
+                    if _card_i + 2 < len(_preview_descs):
+                        st.divider()
 
         with _mol_right:
             st.subheader("Removed Molecules")
