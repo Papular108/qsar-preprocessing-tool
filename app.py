@@ -19,6 +19,7 @@ from pipeline.featurization import featurize_dataset, compute_descriptors, compu
 import altair as alt
 from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
 from pipeline.methodology import generate_methods_text
+from pipeline.pains_catalog import get_pains_explanation, get_brenk_explanation
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -916,9 +917,31 @@ if st.session_state["active_tab"] == "preprocessing":
                 removed_df = pd.DataFrame(result["removed_log"])[
                     ["original_index", "smiles", "step", "reason"]
                 ]
+                # Add explanation column for PAINS/Brenk removals
+                def _removal_explanation(row):
+                    if row["step"] == "check_pains":
+                        _pat = row["reason"].replace("PAINS match: ", "", 1)
+                        return get_pains_explanation(_pat)["description"]
+                    if row["step"] == "check_brenk":
+                        _pat = row["reason"].replace("Brenk match: ", "", 1)
+                        return get_brenk_explanation(_pat)["description"]
+                    return ""
+                removed_df["explanation"] = removed_df.apply(_removal_explanation, axis=1)
+                _has_explanations = removed_df["explanation"].any()
+                if _has_explanations:
+                    st.dataframe(
+                        removed_df,
+                        use_container_width=True,
+                        hide_index=True,
+                        column_config={
+                            "explanation": st.column_config.TextColumn(
+                                "Why?", help="Why this pattern is problematic", width="large",
+                            ),
+                        },
+                    )
                 st.download_button(
                     "Download removed molecules as CSV",
-                    data=removed_df.to_csv(index=False),
+                    data=removed_df.drop(columns=["explanation"]).to_csv(index=False),
                     file_name=f"removed_molecules_{_ts}.csv",
                     mime="text/csv",
                 )
@@ -1568,14 +1591,29 @@ if st.session_state["active_tab"] == "explorer":
             with _exp_al:
                 st.markdown("**PAINS Filter**")
                 if _exp_is_pains:
-                    st.error(f"PAINS hit: {_exp_pains_name}")
+                    st.warning(f"PAINS hit: **{_exp_pains_name}**", icon="\u26A0\uFE0F")
+                    _pains_info = get_pains_explanation(_exp_pains_name)
+                    with st.expander("Why is this pattern problematic?", expanded=True):
+                        st.markdown(f"**{_pains_info['name']}**")
+                        st.markdown(_pains_info["description"])
+                        st.markdown(f"**Mechanism:** {_pains_info['mechanism']}")
+                        st.markdown(f"**Affected assays:** {_pains_info.get('affected_assays', 'Multiple assay types')}")
+                        st.markdown(f"**Recommendation:** {_pains_info['recommendation']}")
+                        st.caption(_pains_info["reference"])
                 else:
                     st.success("No PAINS alerts detected")
             _exp_is_brenk, _exp_brenk_name = check_brenk(_exp_mol)
             with _exp_ar:
                 st.markdown("**Brenk Filter**")
                 if _exp_is_brenk:
-                    st.warning(f"Brenk alert: {_exp_brenk_name}")
+                    st.warning(f"Brenk alert: **{_exp_brenk_name}**", icon="\u26A0\uFE0F")
+                    _brenk_info = get_brenk_explanation(_exp_brenk_name)
+                    with st.expander("Why is this pattern problematic?", expanded=True):
+                        st.markdown(f"**{_brenk_info['name']}**")
+                        st.markdown(_brenk_info["description"])
+                        st.markdown(f"**Mechanism:** {_brenk_info.get('mechanism', 'Various')}")
+                        st.markdown(f"**Recommendation:** {_brenk_info['recommendation']}")
+                        st.caption(_brenk_info["reference"])
                 else:
                     st.success("No Brenk alerts detected")
 
