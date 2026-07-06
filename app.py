@@ -1127,76 +1127,6 @@ if st.session_state["active_tab"] == "preprocessing":
                 )
 
 
-    if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 2:
-        result = st.session_state["pipeline_result"]
-        _pl_label_map = st.session_state.get("pipeline_label_map", {})
-        st.divider()
-        st.header("\U0001F95A Boiled-Egg Diagram")
-
-        @st.cache_data
-        def _cached_boiled_egg(smiles_tuple, labels_tuple):
-            import pandas as pd
-            from rdkit import Chem
-            from rdkit.Chem import Descriptors
-            rows = []
-            for i, smi in enumerate(smiles_tuple):
-                mol = Chem.MolFromSmiles(smi)
-                if mol is None:
-                    continue
-                row = {
-                    "SMILES": smi,
-                    "WLOGP": Descriptors.MolLogP(mol),
-                    "TPSA": Descriptors.TPSA(mol),
-                }
-                if labels_tuple and labels_tuple[i]:
-                    row["Activity"] = labels_tuple[i]
-                rows.append(row)
-            return pd.DataFrame(rows)
-
-        _be_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
-        _be_has_labels = _pl_label_map and any(l is not None for l in _be_labels)
-        _be_df = _cached_boiled_egg(
-            tuple(result["kept_smiles"]),
-            tuple(_be_labels) if _be_has_labels else None,
-        )
-
-        _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(
-            _be_df, label_col="Activity" if _be_has_labels else None,
-        )
-        if _be_sampled:
-            st.info(f"Showing 300 of {len(_be_df)} molecules")
-        st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False})
-
-        st.caption(
-            "Molecules inside the white ellipse are predicted to be passively absorbed by the GI tract. "
-            "Molecules inside the yellow ellipse are predicted to be brain-penetrant (BBB+)."
-        )
-        st.write(f"**{_be_n_gi}** molecules in GI absorption zone, **{_be_n_bbb}** molecules in BBB zone")
-
-        with st.expander("Molecules by zone"):
-            _gi_mols = _be_result_df[_be_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
-            _bbb_mols = _be_result_df[_be_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
-            _be_z1, _be_z2 = st.columns(2)
-            with _be_z1:
-                st.markdown("**GI absorption zone**")
-                if len(_gi_mols):
-                    st.dataframe(_gi_mols, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No molecules in GI absorption zone.")
-            with _be_z2:
-                st.markdown("**BBB permeability zone**")
-                if len(_bbb_mols):
-                    st.dataframe(_bbb_mols, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No molecules in BBB permeability zone.")
-
-        st.info(
-            "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
-            "from two simple descriptors: WLOGP (lipophilicity) and TPSA (polar surface area). "
-            "It is a simple but widely used heuristic \u2014 not a substitute for experimental ADMET data.",
-            icon="\u2139\uFE0F",
-        )
-
     if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 5:
         result = st.session_state["pipeline_result"]
         _pl_label_map = st.session_state.get("pipeline_label_map", {})
@@ -1722,6 +1652,102 @@ if st.session_state["active_tab"] == "explorer":
                     "Values around 3-10% are typical for drug-like molecules with Morgan (r=2, 2048 bits)."
                 )
 
+    # ── Boiled-Egg Diagram ────────────────────────────────────────────────────
+    st.divider()
+    st.header("\U0001F95A Boiled-Egg Diagram")
+
+    if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 2:
+        _be_result = st.session_state["pipeline_result"]
+        _be_label_map = st.session_state.get("pipeline_label_map", {})
+
+        @st.cache_data
+        def _cached_boiled_egg(smiles_tuple, labels_tuple):
+            import pandas as _be_pd
+            from rdkit import Chem as _be_Chem
+            from rdkit.Chem import Descriptors as _be_Desc
+            rows = []
+            for i, smi in enumerate(smiles_tuple):
+                mol = _be_Chem.MolFromSmiles(smi)
+                if mol is None:
+                    continue
+                row = {
+                    "SMILES": smi,
+                    "WLOGP": _be_Desc.MolLogP(mol),
+                    "TPSA": _be_Desc.TPSA(mol),
+                }
+                if labels_tuple and labels_tuple[i]:
+                    row["Activity"] = labels_tuple[i]
+                rows.append(row)
+            return _be_pd.DataFrame(rows)
+
+        _be_labels = [_be_label_map.get(s) for s in _be_result["kept_smiles"]]
+        _be_has_labels = _be_label_map and any(l is not None for l in _be_labels)
+        _be_df = _cached_boiled_egg(
+            tuple(_be_result["kept_smiles"]),
+            tuple(_be_labels) if _be_has_labels else None,
+        )
+
+        _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(
+            _be_df, label_col="Activity" if _be_has_labels else None,
+        )
+
+        # Highlight the current explorer molecule on the diagram
+        _be_explorer_smi = st.session_state.get("explorer_smiles", "").strip()
+        if _be_explorer_smi:
+            import plotly.graph_objects as go
+            _be_exp_mol = Chem.MolFromSmiles(_be_explorer_smi)
+            if _be_exp_mol is not None:
+                _be_exp_tpsa = Descriptors.TPSA(_be_exp_mol)
+                _be_exp_wlogp = Descriptors.MolLogP(_be_exp_mol)
+                _be_chart.add_trace(go.Scatter(
+                    x=[_be_exp_tpsa], y=[_be_exp_wlogp],
+                    mode="markers",
+                    marker=dict(
+                        size=16, color="#1E90FF", opacity=1.0,
+                        symbol="star",
+                        line=dict(width=2, color="black"),
+                    ),
+                    name="Current molecule",
+                    text=[_be_explorer_smi],
+                    hovertemplate="<b>Current molecule</b><br>%{text}<br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+                ))
+
+        if _be_sampled:
+            st.info(f"Showing 300 of {len(_be_df)} molecules")
+        st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False}, key="explorer_boiled_egg")
+
+        st.caption(
+            "Molecules inside the white ellipse are predicted to be passively absorbed by the GI tract. "
+            "Molecules inside the yellow ellipse are predicted to be brain-penetrant (BBB+)."
+        )
+        st.write(f"**{_be_n_gi}** molecules in GI absorption zone, **{_be_n_bbb}** molecules in BBB zone")
+
+        with st.expander("Molecules by zone"):
+            _gi_mols = _be_result_df[_be_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+            _bbb_mols = _be_result_df[_be_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+            _be_z1, _be_z2 = st.columns(2)
+            with _be_z1:
+                st.markdown("**GI absorption zone**")
+                if len(_gi_mols):
+                    st.dataframe(_gi_mols, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No molecules in GI absorption zone.")
+            with _be_z2:
+                st.markdown("**BBB permeability zone**")
+                if len(_bbb_mols):
+                    st.dataframe(_bbb_mols, use_container_width=True, hide_index=True)
+                else:
+                    st.info("No molecules in BBB permeability zone.")
+
+        st.info(
+            "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
+            "from two simple descriptors: WLOGP (lipophilicity) and TPSA (polar surface area). "
+            "It is a simple but widely used heuristic \u2014 not a substitute for experimental ADMET data.",
+            icon="\u2139\uFE0F",
+        )
+    else:
+        st.info("Run the Preprocessing pipeline first to see where your molecules fall on the Boiled-Egg diagram.")
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: Filter Comparison
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1752,8 +1778,34 @@ if st.session_state["active_tab"] == "comparison":
             st.session_state["comparison_smiles"] = "\n".join(_cmp_smi_ex)
             st.rerun()
 
+    _cmp_uploaded_file = st.file_uploader(
+        "Upload a .txt, .csv, or .xlsx file with SMILES",
+        type=["txt", "csv", "xlsx"],
+        key="cmp_file_uploader",
+    )
+    _cmp_uploaded_df = None
+    _cmp_uploaded_smiles_col = None
+    if _cmp_uploaded_file is not None:
+        _cmp_fname = _cmp_uploaded_file.name.lower()
+        if _cmp_fname.endswith(".csv"):
+            _cmp_uploaded_df = pd.read_csv(_cmp_uploaded_file)
+        elif _cmp_fname.endswith(".xlsx"):
+            _cmp_uploaded_df = pd.read_excel(_cmp_uploaded_file)
+        if _cmp_uploaded_df is not None:
+            for _c in ["canonical_smiles", "Smiles", "SMILES", "smiles"]:
+                if _c in _cmp_uploaded_df.columns:
+                    _cmp_uploaded_smiles_col = _c
+                    break
+            if _cmp_uploaded_smiles_col is None:
+                st.warning("Could not auto-detect a SMILES column. Please select it manually.")
+                _cmp_uploaded_smiles_col = st.selectbox(
+                    "Which column contains the SMILES strings?",
+                    _cmp_uploaded_df.columns.tolist(),
+                    key="cmp_smiles_col",
+                )
+
     _cmp_input = st.text_area(
-        "Paste SMILES here (one per line)", key="comparison_smiles", height=150,
+        "Or paste SMILES here (one per line)", key="comparison_smiles", height=150,
     )
 
     st.subheader("Filter configurations")
@@ -1780,9 +1832,16 @@ if st.session_state["active_tab"] == "comparison":
         _cmp_muegge_b = st.checkbox("Muegge", key="cmp_muegge_b")
 
     if st.button("Compare", type="primary", key="cmp_run"):
-        _cmp_list = [l.strip() for l in _cmp_input.splitlines() if l.strip()]
+        _cmp_list = []
+        if _cmp_uploaded_df is not None and _cmp_uploaded_smiles_col:
+            _cmp_list = _cmp_uploaded_df[_cmp_uploaded_smiles_col].dropna().astype(str).tolist()
+        elif _cmp_uploaded_file is not None:
+            _cmp_file_content = _cmp_uploaded_file.read().decode("utf-8")
+            _cmp_list = [l.strip() for l in _cmp_file_content.splitlines() if l.strip()]
+        elif _cmp_input.strip():
+            _cmp_list = [l.strip() for l in _cmp_input.splitlines() if l.strip()]
         if not _cmp_list:
-            st.warning("Please paste at least one SMILES string or load an example dataset.")
+            st.warning("Please upload a file, paste SMILES, or load an example dataset.")
         else:
             with st.spinner("Running both pipelines..."):
                 _cmp_ra = run_preprocessing_pipeline(
