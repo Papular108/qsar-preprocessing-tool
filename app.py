@@ -895,7 +895,7 @@ if st.session_state["active_tab"] == "preprocessing":
                                     st.image(mol_to_image(_card_mol, size=(150, 150)), width=150)
                             with _radar_col:
                                 _mini_fig = plot_mini_radar(_desc)
-                                st.plotly_chart(_mini_fig, use_container_width=True, config={"displayModeBar": False})
+                                st.plotly_chart(_mini_fig, use_container_width=True, config={"displayModeBar": False}, key=f"mini_radar_{_idx}")
                             st.caption(
                                 f"MW={_desc['MW']:.0f} | LogP={_desc['LogP']:.2f} | TPSA={_desc['TPSA']:.0f}"
                             )
@@ -1127,7 +1127,9 @@ if st.session_state["active_tab"] == "preprocessing":
                 )
 
 
-    if len(result["kept_smiles"]) >= 2:
+    if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 2:
+        result = st.session_state["pipeline_result"]
+        _pl_label_map = st.session_state.get("pipeline_label_map", {})
         st.divider()
         st.header("\U0001F95A Boiled-Egg Diagram")
 
@@ -1195,7 +1197,9 @@ if st.session_state["active_tab"] == "preprocessing":
             icon="\u2139\uFE0F",
         )
 
-    if len(result["kept_smiles"]) >= 5:
+    if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 5:
+        result = st.session_state["pipeline_result"]
+        _pl_label_map = st.session_state.get("pipeline_label_map", {})
         st.divider()
         st.header("\U0001F3D7\uFE0F Scaffold Analysis")
         st.caption(
