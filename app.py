@@ -1652,13 +1652,20 @@ if st.session_state["active_tab"] == "explorer":
                     "Values around 3-10% are typical for drug-like molecules with Morgan (r=2, 2048 bits)."
                 )
 
-    # ── Boiled-Egg Diagram ────────────────────────────────────────────────────
-    st.divider()
-    st.header("\U0001F95A Boiled-Egg Diagram")
+    # ── Boiled-Egg Diagram (only shown when a molecule is being analyzed) ────
+    _be_explorer_smi = st.session_state.get("explorer_smiles", "").strip()
+    _be_exp_mol = Chem.MolFromSmiles(_be_explorer_smi) if _be_explorer_smi else None
 
-    if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 2:
-        _be_result = st.session_state["pipeline_result"]
-        _be_label_map = st.session_state.get("pipeline_label_map", {})
+    if _be_exp_mol is not None:
+        import plotly.graph_objects as go
+
+        st.divider()
+        st.header("\U0001F95A Boiled-Egg Diagram")
+
+        _be_has_pipeline = (
+            "pipeline_result" in st.session_state
+            and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 2
+        )
 
         @st.cache_data
         def _cached_boiled_egg(smiles_tuple, labels_tuple):
@@ -1680,39 +1687,42 @@ if st.session_state["active_tab"] == "explorer":
                 rows.append(row)
             return _be_pd.DataFrame(rows)
 
-        _be_labels = [_be_label_map.get(s) for s in _be_result["kept_smiles"]]
-        _be_has_labels = _be_label_map and any(l is not None for l in _be_labels)
-        _be_df = _cached_boiled_egg(
-            tuple(_be_result["kept_smiles"]),
-            tuple(_be_labels) if _be_has_labels else None,
-        )
+        if _be_has_pipeline:
+            # Combined view: pipeline molecules + highlighted explorer molecule
+            _be_result = st.session_state["pipeline_result"]
+            _be_label_map = st.session_state.get("pipeline_label_map", {})
+            _be_labels = [_be_label_map.get(s) for s in _be_result["kept_smiles"]]
+            _be_has_labels = _be_label_map and any(l is not None for l in _be_labels)
+            _be_df = _cached_boiled_egg(
+                tuple(_be_result["kept_smiles"]),
+                tuple(_be_labels) if _be_has_labels else None,
+            )
+            _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(
+                _be_df, label_col="Activity" if _be_has_labels else None,
+            )
+        else:
+            # Solo view: FDA reference drugs + highlighted explorer molecule
+            _be_fda_smiles, _ = get_fda_approved_drugs()
+            _be_df = _cached_boiled_egg(tuple(_be_fda_smiles), None)
+            _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(_be_df)
 
-        _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(
-            _be_df, label_col="Activity" if _be_has_labels else None,
-        )
+        # Add the current explorer molecule as a star marker on top
+        _be_exp_tpsa = Descriptors.TPSA(_be_exp_mol)
+        _be_exp_wlogp = Descriptors.MolLogP(_be_exp_mol)
+        _be_chart.add_trace(go.Scatter(
+            x=[_be_exp_tpsa], y=[_be_exp_wlogp],
+            mode="markers",
+            marker=dict(
+                size=16, color="#1E90FF", opacity=1.0,
+                symbol="star",
+                line=dict(width=2, color="black"),
+            ),
+            name="Current molecule",
+            text=[_be_explorer_smi],
+            hovertemplate="<b>Current molecule</b><br>%{text}<br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+        ))
 
-        # Highlight the current explorer molecule on the diagram
-        _be_explorer_smi = st.session_state.get("explorer_smiles", "").strip()
-        if _be_explorer_smi:
-            import plotly.graph_objects as go
-            _be_exp_mol = Chem.MolFromSmiles(_be_explorer_smi)
-            if _be_exp_mol is not None:
-                _be_exp_tpsa = Descriptors.TPSA(_be_exp_mol)
-                _be_exp_wlogp = Descriptors.MolLogP(_be_exp_mol)
-                _be_chart.add_trace(go.Scatter(
-                    x=[_be_exp_tpsa], y=[_be_exp_wlogp],
-                    mode="markers",
-                    marker=dict(
-                        size=16, color="#1E90FF", opacity=1.0,
-                        symbol="star",
-                        line=dict(width=2, color="black"),
-                    ),
-                    name="Current molecule",
-                    text=[_be_explorer_smi],
-                    hovertemplate="<b>Current molecule</b><br>%{text}<br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
-                ))
-
-        if _be_sampled:
+        if _be_has_pipeline and _be_sampled:
             st.info(f"Showing 300 of {len(_be_df)} molecules")
         st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False}, key="explorer_boiled_egg")
 
@@ -1720,24 +1730,27 @@ if st.session_state["active_tab"] == "explorer":
             "Molecules inside the white ellipse are predicted to be passively absorbed by the GI tract. "
             "Molecules inside the yellow ellipse are predicted to be brain-penetrant (BBB+)."
         )
-        st.write(f"**{_be_n_gi}** molecules in GI absorption zone, **{_be_n_bbb}** molecules in BBB zone")
 
-        with st.expander("Molecules by zone"):
-            _gi_mols = _be_result_df[_be_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
-            _bbb_mols = _be_result_df[_be_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
-            _be_z1, _be_z2 = st.columns(2)
-            with _be_z1:
-                st.markdown("**GI absorption zone**")
-                if len(_gi_mols):
-                    st.dataframe(_gi_mols, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No molecules in GI absorption zone.")
-            with _be_z2:
-                st.markdown("**BBB permeability zone**")
-                if len(_bbb_mols):
-                    st.dataframe(_bbb_mols, use_container_width=True, hide_index=True)
-                else:
-                    st.info("No molecules in BBB permeability zone.")
+        if _be_has_pipeline:
+            st.write(f"**{_be_n_gi}** molecules in GI absorption zone, **{_be_n_bbb}** molecules in BBB zone")
+            with st.expander("Molecules by zone"):
+                _gi_mols = _be_result_df[_be_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+                _bbb_mols = _be_result_df[_be_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+                _be_z1, _be_z2 = st.columns(2)
+                with _be_z1:
+                    st.markdown("**GI absorption zone**")
+                    if len(_gi_mols):
+                        st.dataframe(_gi_mols, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No molecules in GI absorption zone.")
+                with _be_z2:
+                    st.markdown("**BBB permeability zone**")
+                    if len(_bbb_mols):
+                        st.dataframe(_bbb_mols, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No molecules in BBB permeability zone.")
+        else:
+            st.caption("Your molecule is shown as a star. Grey dots show FDA-approved drugs for reference.")
 
         st.info(
             "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
@@ -1745,8 +1758,6 @@ if st.session_state["active_tab"] == "explorer":
             "It is a simple but widely used heuristic \u2014 not a substitute for experimental ADMET data.",
             icon="\u2139\uFE0F",
         )
-    else:
-        st.info("Run the Preprocessing pipeline first to see where your molecules fall on the Boiled-Egg diagram.")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: Filter Comparison
