@@ -76,12 +76,12 @@ def plot_boiled_egg(mols_df, label_col=None):
 
     fig = go.Figure()
 
-    # Draw ellipses
+    # Draw ellipses — axes: X=TPSA, Y=WLOGP (SwissADME horizontal layout)
     theta = np.linspace(0, 2 * np.pi, 300)
 
-    # GI ellipse (egg white) — drawn first as background
-    gi_x = 2.740 + 3.600 * np.cos(theta)
-    gi_y = 69.105 + 69.105 * np.sin(theta)
+    # GI ellipse (egg white) — center: TPSA=69.105, WLOGP=2.740
+    gi_x = 69.105 + 69.105 * np.cos(theta)  # TPSA
+    gi_y = 2.740 + 3.600 * np.sin(theta)     # WLOGP
     fig.add_trace(go.Scatter(
         x=gi_x.tolist(), y=gi_y.tolist(), fill='toself',
         fillcolor='rgba(230,230,230,0.6)',
@@ -89,9 +89,9 @@ def plot_boiled_egg(mols_df, label_col=None):
         name='GI absorption', showlegend=True, hoverinfo='skip',
     ))
 
-    # BBB ellipse (yolk) — drawn on top
-    bbb_x = 1.466 + 2.400 * np.cos(theta)
-    bbb_y = 26.278 + 33.000 * np.sin(theta)
+    # BBB ellipse (yolk) — center: TPSA=26.278, WLOGP=1.466
+    bbb_x = 26.278 + 33.000 * np.cos(theta)  # TPSA
+    bbb_y = 1.466 + 2.400 * np.sin(theta)     # WLOGP
     fig.add_trace(go.Scatter(
         x=bbb_x.tolist(), y=bbb_y.tolist(), fill='toself',
         fillcolor='rgba(255,215,0,0.6)',
@@ -108,31 +108,31 @@ def plot_boiled_egg(mols_df, label_col=None):
             if len(subset) == 0:
                 continue
             fig.add_trace(go.Scatter(
-                x=subset["WLOGP"], y=subset["TPSA"],
+                x=subset["TPSA"], y=subset["WLOGP"],
                 mode="markers",
                 marker=dict(size=10, color=class_colors[cls], opacity=0.85),
                 name=cls,
                 text=subset["SMILES"],
-                hovertemplate="<b>%{text}</b><br>WLOGP=%{x:.2f}<br>TPSA=%{y:.1f}<extra></extra>",
+                hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
             ))
         unlabeled = plot_df[plot_df[label_col].isna()]
         if len(unlabeled) > 0:
             fig.add_trace(go.Scatter(
-                x=unlabeled["WLOGP"], y=unlabeled["TPSA"],
+                x=unlabeled["TPSA"], y=unlabeled["WLOGP"],
                 mode="markers",
                 marker=dict(size=10, color="#555555", opacity=0.85),
                 name="Unlabeled",
                 text=unlabeled["SMILES"],
-                hovertemplate="<b>%{text}</b><br>WLOGP=%{x:.2f}<br>TPSA=%{y:.1f}<extra></extra>",
+                hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
             ))
     else:
         fig.add_trace(go.Scatter(
-            x=plot_df["WLOGP"], y=plot_df["TPSA"],
+            x=plot_df["TPSA"], y=plot_df["WLOGP"],
             mode="markers",
             marker=dict(size=10, color="#555555", opacity=0.85),
             name="Molecules",
             text=plot_df["SMILES"],
-            hovertemplate="<b>%{text}</b><br>WLOGP=%{x:.2f}<br>TPSA=%{y:.1f}<extra></extra>",
+            hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
         ))
 
     fig.update_layout(
@@ -141,20 +141,20 @@ def plot_boiled_egg(mols_df, label_col=None):
         width=700,
         height=550,
         xaxis=dict(
-            title=dict(text='WLOGP (Lipophilicity)', font=dict(size=14)),
-            range=[-3, 7.5],
-            gridcolor='rgba(0,0,0,0.05)',
-            zeroline=False,
-            showgrid=True,
-            dtick=1,
-        ),
-        yaxis=dict(
             title=dict(text='TPSA (\u00c5\u00b2)', font=dict(size=14)),
             range=[-10, 200],
             gridcolor='rgba(0,0,0,0.05)',
             zeroline=False,
             showgrid=True,
             dtick=20,
+        ),
+        yaxis=dict(
+            title=dict(text='WLOGP (Lipophilicity)', font=dict(size=14)),
+            range=[-3, 8],
+            gridcolor='rgba(0,0,0,0.05)',
+            zeroline=False,
+            showgrid=True,
+            dtick=1,
         ),
         legend=dict(
             bgcolor='rgba(255,255,255,0.9)',
