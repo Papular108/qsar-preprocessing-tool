@@ -24,6 +24,31 @@ from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
+def section_banner(title, color="#c8102e"):
+    """Render a red section banner like SwissADME."""
+    st.markdown(f'''
+    <div style="background:{color};color:white;padding:6px 12px;
+                border-radius:6px 6px 0 0;font-weight:600;font-size:1rem;
+                margin-top:20px;margin-bottom:0;">
+        {title}
+    </div>
+    ''', unsafe_allow_html=True)
+
+
+def compact_table(rows):
+    """Render a compact property table. rows is a list of (label, value) tuples."""
+    html = '<table style="width:100%;border-collapse:collapse;font-size:0.9rem;">'
+    for label, value in rows:
+        html += f'''
+        <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:4px 8px;color:#666;width:50%;">{label}</td>
+            <td style="padding:4px 8px;font-weight:500;">{value}</td>
+        </tr>
+        '''
+    html += '</table>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
 def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
     """Render a list of dicts as an HTML table with an embedded structure image column."""
     header_cells = "".join(f"<th style='padding:6px 10px;text-align:left;border-bottom:1px solid #ddd'>{k}</th>" for k in [smiles_key] + extra_keys)
@@ -319,11 +344,12 @@ if st.session_state["active_tab"] == "preprocessing":
             )
 
             # ── Column overview ──
-            st.subheader("Column overview")
-            _ov_c1, _ov_c2, _ov_c3 = st.columns(3)
-            _ov_c1.metric("Rows", f"{_n_rows:,}")
-            _ov_c2.metric("Columns", f"{_n_cols:,}")
-            _ov_c3.metric("SMILES column", _uploaded_smiles_col or "—")
+            section_banner("Column Overview")
+            compact_table([
+                ("Rows", f"{_n_rows:,}"),
+                ("Columns", f"{_n_cols:,}"),
+                ("SMILES column", _uploaded_smiles_col or "\u2014"),
+            ])
             if _numeric_cols_all:
                 st.write(
                     "**Numeric columns:** "
@@ -332,20 +358,16 @@ if st.session_state["active_tab"] == "preprocessing":
             else:
                 st.write("No numeric columns detected.")
 
-            st.divider()
-
             # ── Missing data table (before cleaning) ──
-            st.subheader("Missing data")
+            section_banner("Missing Data")
             _miss_html = _build_missing_data_html(_uploaded_df, _uploaded_smiles_col)
             if _miss_html:
                 st.markdown(_miss_html, unsafe_allow_html=True)
             else:
                 st.info("No key columns found to display missing-data statistics.")
 
-            st.divider()
-
             # ── Clean Dataset ──
-            st.subheader("Clean Dataset")
+            section_banner("Clean Dataset")
             st.write(
                 "Remove rows with missing or invalid SMILES, and cross-fill "
                 "`pchembl_value` / `standard_value` where possible."
@@ -366,13 +388,11 @@ if st.session_state["active_tab"] == "preprocessing":
                 _uploaded_df = st.session_state[_cleaned_key]
 
                 # Summary metrics
-                _m1, _m2, _m3 = st.columns(3)
-                _m1.metric("Rows before", f"{_report['rows_before']:,}")
-                _m2.metric(
-                    "Rows removed",
-                    f"{_report['missing_smiles_removed'] + _report['invalid_smiles_removed']:,}",
-                )
-                _m3.metric("Rows after", f"{_report['rows_after']:,}")
+                compact_table([
+                    ("Rows before", f"{_report['rows_before']:,}"),
+                    ("Rows removed", f"{_report['missing_smiles_removed'] + _report['invalid_smiles_removed']:,}"),
+                    ("Rows after", f"{_report['rows_after']:,}"),
+                ])
 
                 # Detailed results
                 _details = []
@@ -431,8 +451,7 @@ if st.session_state["active_tab"] == "preprocessing":
                         )
 
                 # Updated missing data table (after cleaning)
-                st.divider()
-                st.subheader("Missing data (after cleaning)")
+                section_banner("Missing Data (after cleaning)")
                 _miss_html_after = _build_missing_data_html(
                     _uploaded_df, _uploaded_smiles_col
                 )
@@ -802,13 +821,24 @@ if st.session_state["active_tab"] == "preprocessing":
         _pl_pval_map = st.session_state.get("pipeline_pval_map", {})
         _pl_pchembl_map = st.session_state.get("pipeline_pchembl_map", {})
 
-        st.subheader("Results")
-        st.write(f"Input molecules: {result['input_count']}")
-        st.write(f"Kept after preprocessing: {len(result['kept_smiles'])}")
+        section_banner("Pipeline Results")
+        _removed_count = result['input_count'] - len(result['kept_smiles'])
+        _result_rows = [
+            ("Input molecules", str(result['input_count'])),
+            ("Kept after preprocessing", str(len(result['kept_smiles']))),
+            ("Removed", str(_removed_count)),
+        ]
+        if _pl_label_map:
+            _kept_labels_summary = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+            for _cls in ["Active", "Intermediate", "Inactive"]:
+                _cnt = _kept_labels_summary.count(_cls)
+                if _cnt:
+                    _result_rows.append((f"{_cls} kept", str(_cnt)))
+        compact_table(_result_rows)
 
-        st.subheader("Audit Trail")
-        audit_df = pd.DataFrame(result["audit_trail"])
-        st.dataframe(audit_df)
+        with st.expander("Audit Trail"):
+            audit_df = pd.DataFrame(result["audit_trail"])
+            st.dataframe(audit_df, use_container_width=True, hide_index=True)
 
         # Build kept DataFrame
         kept_data = {"SMILES": result["kept_smiles"]}
@@ -851,24 +881,8 @@ if st.session_state["active_tab"] == "preprocessing":
         csv_data = metadata + kept_df.to_csv(index=False)
 
         # Side-by-side: Kept (left, wider) | Removed (right, narrower)
-        _mol_left, _mol_right = st.columns([2, 1])
-        with _mol_left:
-            st.subheader("Kept Molecules")
-            st.write(f"{len(kept_df)} molecules kept after preprocessing")
-
-            # Activity class breakdown (inside kept column)
-            if _pl_label_map:
-                _kept_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
-                _class_names = ["Active", "Intermediate", "Inactive"]
-                _active_classes = [c for c in _class_names if c in _kept_labels]
-                if _active_classes:
-                    _kept_metric_cols = st.columns(len(_active_classes))
-                    for _ci, _cls in enumerate(_active_classes):
-                        _kept_metric_cols[_ci].metric(_cls, _kept_labels.count(_cls))
-                    _n_unlabeled = sum(1 for l in _kept_labels if l is None)
-                    if _n_unlabeled:
-                        st.caption(f"{_n_unlabeled} molecules had no activity label.")
-
+        _dl_left, _dl_right = st.columns(2)
+        with _dl_left:
             st.download_button(
                 "Download kept molecules as CSV",
                 data=csv_data,
@@ -911,10 +925,8 @@ if st.session_state["active_tab"] == "preprocessing":
                     if _card_i + 2 < len(_preview_descs):
                         st.divider()
 
-        with _mol_right:
-            st.subheader("Removed Molecules")
+        with _dl_right:
             if result["removed_log"]:
-                st.write(f"{len(result['removed_log'])} molecules removed")
                 removed_df = pd.DataFrame(result["removed_log"])[
                     ["original_index", "smiles", "step", "reason"]
                 ]
@@ -928,6 +940,15 @@ if st.session_state["active_tab"] == "preprocessing":
                         return get_brenk_explanation(_pat)["description"]
                     return ""
                 removed_df["explanation"] = removed_df.apply(_removal_explanation, axis=1)
+                st.download_button(
+                    "Download removed molecules as CSV",
+                    data=removed_df.drop(columns=["explanation"]).to_csv(index=False),
+                    file_name=f"removed_molecules_{_ts}.csv",
+                    mime="text/csv",
+                )
+
+        with st.expander(f"View removed molecules ({len(result['removed_log'])})"):
+            if result["removed_log"]:
                 _has_explanations = removed_df["explanation"].any()
                 if _has_explanations:
                     st.dataframe(
@@ -940,16 +961,12 @@ if st.session_state["active_tab"] == "preprocessing":
                             ),
                         },
                     )
-                st.download_button(
-                    "Download removed molecules as CSV",
-                    data=removed_df.drop(columns=["explanation"]).to_csv(index=False),
-                    file_name=f"removed_molecules_{_ts}.csv",
-                    mime="text/csv",
-                )
+                else:
+                    st.dataframe(removed_df, use_container_width=True, hide_index=True)
             else:
-                st.write("No molecules were removed.")
+                st.info("No molecules were removed.")
 
-        st.subheader("Descriptor Distributions")
+        section_banner("Descriptor Distributions")
         if len(result["kept_smiles"]) < 2:
             st.info("At least 2 kept molecules are needed to show distributions.")
         else:
@@ -1025,7 +1042,7 @@ if st.session_state["active_tab"] == "preprocessing":
                     st.altair_chart(chart, use_container_width=True)
 
         if len(result["kept_smiles"]) >= 5:
-            st.subheader("Descriptor Correlations")
+            section_banner("Descriptor Correlations")
             _sa_tuple = tuple(result["sa_scores"]) if result["sa_scores"] is not None else None
             _qed_tuple = tuple(result["qed_scores"]) if result["qed_scores"] is not None else None
             corr_long = _cached_corr_matrix(tuple(result["kept_smiles"]), _sa_tuple, _qed_tuple)
@@ -1070,7 +1087,7 @@ if st.session_state["active_tab"] == "preprocessing":
             )
 
         if len(result["kept_smiles"]) >= 5:
-            st.subheader("Chemical Space Visualization")
+            section_banner("Chemical Space Visualization")
             pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
 
             # Assign activity-class-aware groups when labels exist
@@ -1154,8 +1171,7 @@ if st.session_state["active_tab"] == "preprocessing":
     if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 5:
         result = st.session_state["pipeline_result"]
         _pl_label_map = st.session_state.get("pipeline_label_map", {})
-        st.divider()
-        st.header("\U0001F3D7\uFE0F Scaffold Analysis")
+        section_banner("Scaffold Analysis")
         st.caption(
             "Murcko scaffold analysis identifies the core ring systems shared across molecules. "
             "Scaffolds appearing frequently define the dominant chemical series in your dataset "
@@ -1171,12 +1187,12 @@ if st.session_state["active_tab"] == "preprocessing":
         _n_mols = len(result["kept_smiles"])
 
         # a) Summary metrics
-        _sc1, _sc2, _sc3 = st.columns([1, 1, 1])
-        _sc1.metric("Unique Scaffolds", _scaf["unique_scaffold_count"])
         _top_smi, _top_cnt = list(_scaf["scaffold_counts"].items())[0]
-        _sc2.metric("Most Common Scaffold", f"{_top_cnt}x",
-                    help=_top_smi[:50])
-        _sc3.metric("Singleton Scaffolds", _scaf["singleton_count"])
+        compact_table([
+            ("Unique Scaffolds", str(_scaf["unique_scaffold_count"])),
+            ("Most Common Scaffold", f"{_top_cnt}x"),
+            ("Singleton Scaffolds", str(_scaf["singleton_count"])),
+        ])
 
         # b) Scaffold frequency chart
         _scaf_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
@@ -1249,16 +1265,14 @@ if st.session_state["active_tab"] == "preprocessing":
         # d) Scaffold diversity
         st.subheader("Scaffold Diversity")
         _diversity = _scaf["unique_scaffold_count"] / _n_mols if _n_mols > 0 else 0
-        st.metric("Diversity Score", f"{_diversity:.2f}")
+        compact_table([("Diversity Score", f"{_diversity:.2f}")])
         st.progress(min(_diversity, 1.0))
         st.caption(
             "High scaffold diversity (>0.5) indicates a structurally diverse dataset. "
             "Low diversity suggests the dataset is dominated by a few chemical series."
         )
 
-    st.divider()
-
-    st.header("Featurization")
+    section_banner("Featurization")
     st.write("After preprocessing, generate descriptors and fingerprints for your kept molecules.")
 
     fp_type = st.selectbox(
@@ -1321,7 +1335,7 @@ if st.session_state["active_tab"] == "preprocessing":
         feat_errors = _fr["feat_errors"]
         _feat_ts = _fr["ts"]
 
-        st.subheader("Featurized Data")
+        section_banner("Featurized Data")
         st.write(f"Shape: {feature_df.shape}")
         st.dataframe(feature_df.head(20))
 
@@ -1385,9 +1399,7 @@ if st.session_state["active_tab"] == "preprocessing":
                         st.write(f"{len(_sub)} molecules")
                         st.dataframe(_sub.head(10))
 
-    st.divider()
-
-    st.header("Generate Methods Section")
+    section_banner("Generate Methods Section")
     st.write("Generate a publication-ready paragraph describing the preprocessing and featurization steps you used.")
 
     if st.button("Generate Methods Section"):
@@ -1492,13 +1504,13 @@ if st.session_state["active_tab"] == "explorer":
             _exp_fcsp3 = rdMolDescriptors.CalcFractionCSP3(_exp_mol)
             _exp_heavy = _exp_mol.GetNumHeavyAtoms()
             _exp_rings = _exp_mol.GetRingInfo().NumRings()
-            # Structure & Radar Chart
-            st.divider()
-            st.subheader("Structure & Identifiers")
-
+            # ── Structure & Radar (top row) ──
             _exp_canonical = Chem.MolToSmiles(_exp_mol)
             _exp_insatu = 1.0 - _exp_fcsp3
             _exp_insolu_val = (_exp_logp + 2.0) / 7.0
+            _exp_formula = rdMolDescriptors.CalcMolFormula(_exp_mol)
+            _exp_inchi = MolToInchi(_exp_mol)
+            _exp_inchikey = InchiToInchiKey(_exp_inchi) if _exp_inchi else "N/A"
 
             st.markdown(
                 '<div style="border:1px solid #e0e0e0; border-radius:10px; padding:16px; background:#fff">',
@@ -1517,175 +1529,126 @@ if st.session_state["active_tab"] == "explorer":
                     "FractionCsp3": _exp_fcsp3,
                 })
                 st.plotly_chart(_radar_fig, use_container_width=True, config={"displayModeBar": False})
-                st.caption(
-                    f"LIPO={_exp_logp:.2f} | SIZE={_exp_mw:.0f} | "
-                    f"POLAR={_exp_tpsa:.0f} | FLEX={_exp_rotb:.0f} | "
-                    f"INSATU={_exp_insatu:.2f} | INSOLU={_exp_insolu_val:.2f}"
-                )
             st.markdown("</div>", unsafe_allow_html=True)
 
-            st.code(_exp_canonical, language=None)
-
-            _exp_formula = rdMolDescriptors.CalcMolFormula(_exp_mol)
-            _exp_inchi = MolToInchi(_exp_mol)
-            _exp_inchikey = InchiToInchiKey(_exp_inchi) if _exp_inchi else "N/A"
-            _exp_id_c1, _exp_id_c2, _exp_id_c3 = st.columns(3)
-            with _exp_id_c1:
-                st.markdown("**Molecular Formula**")
-                st.code(_exp_formula, language=None)
-            with _exp_id_c2:
-                st.markdown("**InChI**")
-                st.code(_exp_inchi or "N/A", language=None)
-            with _exp_id_c3:
-                st.markdown("**InChIKey**")
-                st.code(_exp_inchikey, language=None)
-
-            # Physicochemical Properties
-            st.divider()
-            st.subheader("Physicochemical Properties")
-            _exp_props = [
-                ("MW (g/mol)", f"{_exp_mw:.2f}"), ("LogP", f"{_exp_logp:.2f}"),
-                ("TPSA (A^2)", f"{_exp_tpsa:.1f}"), ("HBD", str(_exp_hbd)),
-                ("HBA", str(_exp_hba)), ("Rotatable Bonds", str(_exp_rotb)),
-                ("Aromatic Rings", str(_exp_arom)), ("Fraction Csp3", f"{_exp_fcsp3:.3f}"),
-                ("Heavy Atom Count", str(_exp_heavy)), ("Ring Count", str(_exp_rings)),
-            ]
-            _exp_r1, _exp_r2 = _exp_props[:5], _exp_props[5:]
-            _exp_ca = st.columns(5)
-            _exp_cb = st.columns(5)
-            for col, (lbl, val) in zip(_exp_ca, _exp_r1):
-                col.metric(lbl, val)
-            for col, (lbl, val) in zip(_exp_cb, _exp_r2):
-                col.metric(lbl, val)
-
-            # Druglikeness Rules
-            st.divider()
-            st.subheader("Druglikeness Rules")
-            _exp_rules = []
-            _lip_p, _, _lip_r = check_lipinski(_exp_mol, max_violations=1)
-            _exp_rules.append(("Lipinski (<=1 violation)", _lip_p, _lip_r or ""))
-            _veb_p, _, _veb_r = check_veber(_exp_mol)
-            _exp_rules.append(("Veber", _veb_p, _veb_r or ""))
-            _gho_p, _, _gho_r = check_ghose(_exp_mol)
-            _exp_rules.append(("Ghose", _gho_p, _gho_r or ""))
-            _ega_p, _, _ega_r = check_egan(_exp_mol)
-            _exp_rules.append(("Egan", _ega_p, _ega_r or ""))
-            _mue_p, _, _mue_r = check_muegge(_exp_mol)
-            _exp_rules.append(("Muegge", _mue_p, _mue_r or ""))
-            _exp_rule_rows = [{"Rule": n, "Result": "Pass" if p else "Fail", "Detail": r}
-                              for n, p, r in _exp_rules]
-            _exp_rules_df = pd.DataFrame(_exp_rule_rows)
-
-            def _style_result(val):
-                if val == "Pass":
-                    return "color: green; font-weight: bold"
-                if val == "Fail":
-                    return "color: red; font-weight: bold"
-                return ""
-
-            st.dataframe(
-                _exp_rules_df.style.map(_style_result, subset=["Result"]),
-                use_container_width=True, hide_index=True,
-            )
-
-            # Scores & Alerts
-            st.divider()
-            st.subheader("Scores & Alerts")
-            _exp_sl, _exp_sr = st.columns(2)
+            # ── Compute all values needed for tables ──
+            _exp_mr = Descriptors.MolMR(_exp_mol)
+            _exp_arom_heavy = sum(1 for a in _exp_mol.GetAtoms() if a.GetIsAromatic())
             _exp_qed, _exp_qed_err = compute_qed(_exp_mol)
-            with _exp_sl:
-                st.markdown("**QED (Quantitative Estimate of Druglikeness)**")
-                if _exp_qed_err:
-                    st.error(_exp_qed_err)
-                else:
-                    st.write(f"Score: **{_exp_qed:.3f}** (0 = least drug-like, 1 = most)")
-                    st.progress(float(_exp_qed))
-                    if _exp_qed >= 0.67:
-                        st.caption("High druglikeness")
-                    elif _exp_qed >= 0.34:
-                        st.caption("Moderate druglikeness")
-                    else:
-                        st.caption("Low druglikeness")
             try:
                 _exp_sa = sascorer.calculateScore(_exp_mol)
                 _exp_sa_err = None
             except Exception as e:
                 _exp_sa = None
                 _exp_sa_err = str(e)
-            with _exp_sr:
-                st.markdown("**SA Score (Synthetic Accessibility)**")
-                if _exp_sa_err:
-                    st.error(_exp_sa_err)
-                else:
-                    st.write(f"Score: **{_exp_sa:.2f}** (1 = easy, 10 = very difficult)")
-                    st.progress(float(1.0 - (_exp_sa - 1) / 9.0))
-                    if _exp_sa <= 3:
-                        st.caption("Easy to synthesize")
-                    elif _exp_sa <= 6:
-                        st.caption("Moderate synthetic difficulty")
-                    else:
-                        st.caption("Difficult to synthesize")
-            _exp_al, _exp_ar = st.columns(2)
             _exp_is_pains, _exp_pains_name = check_pains(_exp_mol)
-            with _exp_al:
-                st.markdown("**PAINS Filter**")
-                if _exp_is_pains:
-                    st.warning(f"PAINS hit: **{_exp_pains_name}**", icon="\u26A0\uFE0F")
-                    _pains_info = get_pains_explanation(_exp_pains_name)
-                    with st.expander("Why is this pattern problematic?", expanded=True):
-                        st.markdown(f"**{_pains_info['name']}**")
-                        st.markdown(_pains_info["description"])
-                        st.markdown(f"**Mechanism:** {_pains_info['mechanism']}")
-                        st.markdown(f"**Affected assays:** {_pains_info.get('affected_assays', 'Multiple assay types')}")
-                        st.markdown(f"**Recommendation:** {_pains_info['recommendation']}")
-                        st.caption(_pains_info["reference"])
-                else:
-                    st.success("No PAINS alerts detected")
             _exp_is_brenk, _exp_brenk_name = check_brenk(_exp_mol)
-            with _exp_ar:
-                st.markdown("**Brenk Filter**")
-                if _exp_is_brenk:
-                    st.warning(f"Brenk alert: **{_exp_brenk_name}**", icon="\u26A0\uFE0F")
-                    _brenk_info = get_brenk_explanation(_exp_brenk_name)
-                    with st.expander("Why is this pattern problematic?", expanded=True):
-                        st.markdown(f"**{_brenk_info['name']}**")
-                        st.markdown(_brenk_info["description"])
-                        st.markdown(f"**Mechanism:** {_brenk_info.get('mechanism', 'Various')}")
-                        st.markdown(f"**Recommendation:** {_brenk_info['recommendation']}")
-                        st.caption(_brenk_info["reference"])
-                else:
-                    st.success("No Brenk alerts detected")
+            _esol_logs, _esol_mg, _esol_mol_sol, _esol_class, _esol_err = compute_esol(_exp_mol)
 
-            # Water Solubility (ESOL)
-            st.divider()
-            st.subheader("Water Solubility (ESOL)")
-            _esol_logs, _esol_mg, _esol_mol, _esol_class, _esol_err = compute_esol(_exp_mol)
-            if _esol_err:
-                st.error(_esol_err)
-            else:
-                _esol_left, _esol_right = st.columns([1, 1])
-                with _esol_left:
-                    st.metric("LogS (log mol/L)", f"{_esol_logs:.2f}")
-                    _class_colors = {
-                        "Highly soluble": "green", "Soluble": "green",
-                        "Moderately soluble": "blue",
-                        "Slightly soluble": "orange",
-                        "Insoluble": "red", "Poorly soluble": "red",
-                    }
-                    _cc = _class_colors.get(_esol_class, "grey")
-                    st.markdown(f"Class: :{_cc}[**{_esol_class}**]")
-                with _esol_right:
-                    st.metric("Solubility (mg/mL)", f"{_esol_mg:.4g}")
-                    st.metric("Solubility (mol/L)", f"{_esol_mol:.4g}")
-                # Gauge bar: LogS from -8 to +1
-                _gauge_val = max(min((_esol_logs + 8) / 9.0, 1.0), 0.0)
-                st.markdown("**Solubility scale** (LogS: -8 to +1)")
-                st.progress(_gauge_val)
-                st.caption(
-                    "LogS predicted using the ESOL model (Delaney, 2004). "
-                    "LogS = log\u2081\u2080 of aqueous solubility in mol/L. "
-                    "Higher values indicate better water solubility."
-                )
+            _lip_p, _, _lip_r = check_lipinski(_exp_mol, max_violations=1)
+            _veb_p, _, _veb_r = check_veber(_exp_mol)
+            _gho_p, _, _gho_r = check_ghose(_exp_mol)
+            _ega_p, _, _ega_r = check_egan(_exp_mol)
+            _mue_p, _, _mue_r = check_muegge(_exp_mol)
+
+            def _pass_fail(passed, detail=None):
+                icon = '<span style="color:green;font-weight:700">Yes</span>' if passed else '<span style="color:red;font-weight:700">No</span>'
+                if detail:
+                    return f'{icon}; {detail}'
+                return icon
+
+            # Leadlikeness check (250 < MW < 350, LogP <= 3.5, RotBonds <= 7)
+            _lead_violations = []
+            if _exp_mw < 250 or _exp_mw > 350:
+                _lead_violations.append(f"MW={_exp_mw:.0f}")
+            if _exp_logp > 3.5:
+                _lead_violations.append(f"LogP={_exp_logp:.2f}")
+            if _exp_rotb > 7:
+                _lead_violations.append(f"RotBonds={_exp_rotb}")
+            _lead_pass = len(_lead_violations) == 0
+
+            # ── Two-column property layout ──
+            _exp_left, _exp_right = st.columns(2)
+
+            with _exp_left:
+                section_banner("Physicochemical Properties")
+                compact_table([
+                    ("Formula", _exp_formula),
+                    ("Molecular weight", f"{_exp_mw:.2f} g/mol"),
+                    ("Num. heavy atoms", str(_exp_heavy)),
+                    ("Num. arom. heavy atoms", str(_exp_arom_heavy)),
+                    ("Fraction Csp3", f"{_exp_fcsp3:.3f}"),
+                    ("Num. rotatable bonds", str(_exp_rotb)),
+                    ("Num. H-bond acceptors", str(_exp_hba)),
+                    ("Num. H-bond donors", str(_exp_hbd)),
+                    ("Molar Refractivity", f"{_exp_mr:.2f}"),
+                    ("TPSA", f"{_exp_tpsa:.2f} \u00c5\u00b2"),
+                ])
+
+                section_banner("Lipophilicity")
+                compact_table([
+                    ("Log P (Crippen/WLOGP)", f"{_exp_logp:.2f}"),
+                    ("Consensus Log P", f"{_exp_logp:.2f}"),
+                ])
+
+                section_banner("Water Solubility")
+                if _esol_err:
+                    st.error(_esol_err)
+                else:
+                    _sol_mg_str = f"{_esol_mg:.4g} mg/ml ; {_esol_mol_sol:.4g} mol/l"
+                    compact_table([
+                        ("Log S (ESOL)", f"{_esol_logs:.2f}"),
+                        ("Solubility", _sol_mg_str),
+                        ("Class", _esol_class),
+                    ])
+
+            with _exp_right:
+                section_banner("Druglikeness")
+                compact_table([
+                    ("Lipinski", _pass_fail(_lip_p, _lip_r)),
+                    ("Veber", _pass_fail(_veb_p, _veb_r)),
+                    ("Ghose", _pass_fail(_gho_p, _gho_r)),
+                    ("Egan", _pass_fail(_ega_p, _ega_r)),
+                    ("Muegge", _pass_fail(_mue_p, _mue_r)),
+                    ("Bioavailability Score", f"{_exp_qed:.2f}" if not _exp_qed_err else "N/A"),
+                ])
+
+                section_banner("Medicinal Chemistry")
+                _pains_str = f'<span style="color:red">1 alert: {_exp_pains_name}</span>' if _exp_is_pains else '<span style="color:green">0 alerts</span>'
+                _brenk_str = f'<span style="color:red">1 alert: {_exp_brenk_name}</span>' if _exp_is_brenk else '<span style="color:green">0 alerts</span>'
+                compact_table([
+                    ("PAINS", _pains_str),
+                    ("Brenk", _brenk_str),
+                    ("Leadlikeness", _pass_fail(_lead_pass, "; ".join(_lead_violations) if _lead_violations else None)),
+                    ("Synthetic accessibility", f"{_exp_sa:.2f}" if not _exp_sa_err else "N/A"),
+                ])
+
+            # ── PAINS / Brenk detail expanders ──
+            if _exp_is_pains or _exp_is_brenk:
+                _exp_al, _exp_ar = st.columns(2)
+                if _exp_is_pains:
+                    with _exp_al:
+                        _pains_info = get_pains_explanation(_exp_pains_name)
+                        with st.expander(f"PAINS: {_exp_pains_name}", expanded=True):
+                            st.markdown(_pains_info["description"])
+                            st.markdown(f"**Mechanism:** {_pains_info['mechanism']}")
+                            st.markdown(f"**Recommendation:** {_pains_info['recommendation']}")
+                if _exp_is_brenk:
+                    with _exp_ar:
+                        _brenk_info = get_brenk_explanation(_exp_brenk_name)
+                        with st.expander(f"Brenk: {_exp_brenk_name}", expanded=True):
+                            st.markdown(_brenk_info["description"])
+                            st.markdown(f"**Mechanism:** {_brenk_info.get('mechanism', 'Various')}")
+                            st.markdown(f"**Recommendation:** {_brenk_info['recommendation']}")
+
+            # ── Identifiers ──
+            section_banner("Identifiers")
+            compact_table([
+                ("Canonical SMILES", f"<code>{_exp_canonical}</code>"),
+                ("InChI", f"<code style='word-break:break-all'>{_exp_inchi or 'N/A'}</code>"),
+                ("InChIKey", f"<code>{_exp_inchikey}</code>"),
+                ("Molecular Formula", _exp_formula),
+            ])
 
             # Fingerprint Preview
             st.divider()
@@ -1710,7 +1673,7 @@ if st.session_state["active_tab"] == "explorer":
                 _prev_radius = 2
 
             _prev_label = f"{_prev_fp_type}, {_prev_n_bits} bits"
-            st.subheader(f"Fingerprint Preview ({_prev_label})")
+            section_banner(f"Fingerprint Preview ({_prev_label})")
             _exp_fp, _exp_fp_err = compute_fingerprint(_exp_mol, fp_type=_prev_fp_type, radius=_prev_radius, n_bits=_prev_n_bits)
             if _exp_fp_err:
                 st.error(_exp_fp_err)
@@ -1718,11 +1681,11 @@ if st.session_state["active_tab"] == "explorer":
                 _exp_bits_on = int(_exp_fp.sum())
                 _exp_total_bits = len(_exp_fp)
                 _exp_density = _exp_bits_on / _exp_total_bits
-                _fp_c1, _fp_c2, _fp_c3 = st.columns(3)
-                _fp_c1.metric("Bits ON", _exp_bits_on)
-                _fp_c2.metric("Bits OFF", _exp_total_bits - _exp_bits_on)
-                _fp_c3.metric("Bit Density", f"{_exp_density:.1%}")
-                st.markdown("**Bit density**")
+                compact_table([
+                    ("Bits ON", str(_exp_bits_on)),
+                    ("Bits OFF", str(_exp_total_bits - _exp_bits_on)),
+                    ("Bit Density", f"{_exp_density:.1%}"),
+                ])
                 st.progress(_exp_density)
                 st.caption(
                     "Bit density reflects how structurally rich the fingerprint is. "
@@ -1735,8 +1698,7 @@ if st.session_state["active_tab"] == "explorer":
     if _be_mols:
         import plotly.graph_objects as go
 
-        st.divider()
-        st.header("\U0001F95A Boiled-Egg Diagram")
+        section_banner("Boiled-Egg Diagram")
 
         _be_has_pipeline = (
             "pipeline_result" in st.session_state
@@ -1988,22 +1950,20 @@ if st.session_state["active_tab"] == "comparison":
         _cmp_rb = _cmp_r["result_b"]
         _cmp_n = _cmp_r["input_count"]
 
-        st.subheader("Results")
+        section_banner("Results")
         _rc1, _rc2 = st.columns(2)
         with _rc1:
-            st.markdown("**Configuration A**")
             _ka = len(_cmp_ra["kept_smiles"])
-            st.metric("Kept", _ka)
-            st.metric("Removed", _cmp_n - _ka)
-            st.caption("Audit trail")
-            st.dataframe(pd.DataFrame(_cmp_ra["audit_trail"]), use_container_width=True)
+            st.markdown("**Configuration A**")
+            compact_table([("Kept", str(_ka)), ("Removed", str(_cmp_n - _ka))])
+            with st.expander("Audit trail"):
+                st.dataframe(pd.DataFrame(_cmp_ra["audit_trail"]), use_container_width=True, hide_index=True)
         with _rc2:
-            st.markdown("**Configuration B**")
             _kb = len(_cmp_rb["kept_smiles"])
-            st.metric("Kept", _kb)
-            st.metric("Removed", _cmp_n - _kb)
-            st.caption("Audit trail")
-            st.dataframe(pd.DataFrame(_cmp_rb["audit_trail"]), use_container_width=True)
+            st.markdown("**Configuration B**")
+            compact_table([("Kept", str(_kb)), ("Removed", str(_cmp_n - _kb))])
+            with st.expander("Audit trail"):
+                st.dataframe(pd.DataFrame(_cmp_rb["audit_trail"]), use_container_width=True, hide_index=True)
 
         st.subheader("Molecules that differ between configurations")
         _set_a = set(_cmp_ra["kept_smiles"])
