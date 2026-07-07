@@ -1414,7 +1414,8 @@ if st.session_state["active_tab"] == "preprocessing":
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "explorer":
     st.header("Molecule Explorer")
-    st.write("Enter a SMILES string to see a full physicochemical and druglikeness profile.")
+    st.write("Enter one or more SMILES strings to see a full physicochemical and druglikeness profile. "
+             "Optionally add a name after each SMILES, separated by a space or tab.")
 
     _EXPLORER_PICKS = {
         "Aspirin":    "CC(=O)Oc1ccccc1C(=O)O",
@@ -1426,22 +1427,59 @@ if st.session_state["active_tab"] == "explorer":
     _exp_cols = st.columns(len(_EXPLORER_PICKS))
     for _exp_col, (_exp_name, _exp_smi) in zip(_exp_cols, _EXPLORER_PICKS.items()):
         if _exp_col.button(_exp_name, use_container_width=True, key=f"explorer_pick_{_exp_name}"):
-            st.session_state["explorer_smiles"] = _exp_smi
+            st.session_state["explorer_smiles"] = f"{_exp_smi} {_exp_name}"
             st.rerun()
 
-    _explorer_input = st.text_input(
-        "SMILES",
-        placeholder="e.g. CC(=O)Oc1ccccc1C(=O)O",
+    _explorer_input = st.text_area(
+        "SMILES (one per line, optionally followed by a name)",
+        placeholder="CC(=O)Oc1ccccc1C(=O)O Aspirin\nCn1cnc2c1c(=O)n(C)c(=O)n2C Caffeine\nc1ccc(O)c(O)c1",
         key="explorer_smiles",
+        height=120,
     )
 
     _explorer_analyze = st.button("Analyze", type="primary", key="explorer_analyze")
 
+    # Parse multi-molecule input
+    _explorer_molecules = []  # list of (smiles, name, mol)
     if (_explorer_analyze or _explorer_input) and _explorer_input and _explorer_input.strip():
-        _exp_mol = Chem.MolFromSmiles(_explorer_input.strip())
-        if _exp_mol is None:
-            st.error(f"Could not parse SMILES: `{_explorer_input.strip()}`")
+        _parse_errors = []
+        for _line_i, _line in enumerate(_explorer_input.strip().splitlines()):
+            _line = _line.strip()
+            if not _line:
+                continue
+            _parts = _line.split(None, 1)
+            _smi = _parts[0]
+            _name = _parts[1] if len(_parts) > 1 else f"Molecule {_line_i + 1}"
+            _mol = Chem.MolFromSmiles(_smi)
+            if _mol is None:
+                _parse_errors.append(f"Could not parse SMILES: `{_smi}`")
+            else:
+                _explorer_molecules.append((_smi, _name, _mol))
+        for _err in _parse_errors:
+            st.error(_err)
+
+    if _explorer_molecules:
+        st.session_state["explorer_molecules"] = _explorer_molecules
+
+        # Molecule selector
+        _exp_names = [f"{name} ({smi[:30]}{'...' if len(smi) > 30 else ''})"
+                      for smi, name, _ in _explorer_molecules]
+        if len(_explorer_molecules) > 1:
+            _exp_sel_idx = st.selectbox(
+                f"Showing molecule 1 of {len(_explorer_molecules)} — select to switch:",
+                range(len(_explorer_molecules)),
+                format_func=lambda i: _exp_names[i],
+                key="explorer_mol_idx",
+            )
         else:
+            _exp_sel_idx = 0
+
+        _exp_smi_sel, _exp_name_sel, _exp_mol = _explorer_molecules[_exp_sel_idx]
+
+        if len(_explorer_molecules) > 1:
+            st.caption(f"Viewing: **{_explorer_molecules[_exp_sel_idx][1]}**")
+
+        if _exp_mol is not None:
             # Compute descriptors early (needed for radar chart)
             _exp_mw = Descriptors.MolWt(_exp_mol)
             _exp_logp = Descriptors.MolLogP(_exp_mol)
@@ -1690,11 +1728,10 @@ if st.session_state["active_tab"] == "explorer":
                     "Values around 3-10% are typical for drug-like molecules with Morgan (r=2, 2048 bits)."
                 )
 
-    # ── Boiled-Egg Diagram (only shown when a molecule is being analyzed) ────
-    _be_explorer_smi = st.session_state.get("explorer_smiles", "").strip()
-    _be_exp_mol = Chem.MolFromSmiles(_be_explorer_smi) if _be_explorer_smi else None
+    # ── Boiled-Egg Diagram (only shown when molecules are being analyzed) ────
+    _be_mols = st.session_state.get("explorer_molecules", [])
 
-    if _be_exp_mol is not None:
+    if _be_mols:
         import plotly.graph_objects as go
 
         st.divider()
@@ -1726,7 +1763,6 @@ if st.session_state["active_tab"] == "explorer":
             return _be_pd.DataFrame(rows)
 
         if _be_has_pipeline:
-            # Combined view: pipeline molecules + highlighted explorer molecule
             _be_result = st.session_state["pipeline_result"]
             _be_label_map = st.session_state.get("pipeline_label_map", {})
             _be_labels = [_be_label_map.get(s) for s in _be_result["kept_smiles"]]
@@ -1739,29 +1775,58 @@ if st.session_state["active_tab"] == "explorer":
                 _be_df, label_col="Activity" if _be_has_labels else None,
             )
         else:
-            # Solo view: FDA reference drugs + highlighted explorer molecule
             _be_fda_smiles, _ = get_fda_approved_drugs()
             _be_df = _cached_boiled_egg(tuple(_be_fda_smiles), None)
             _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(_be_df)
 
-        # Add the current explorer molecule as a star marker on top
-        _be_exp_tpsa = Descriptors.TPSA(_be_exp_mol)
-        _be_exp_wlogp = Descriptors.MolLogP(_be_exp_mol)
-        _be_chart.add_trace(go.Scatter(
-            x=[_be_exp_tpsa], y=[_be_exp_wlogp],
-            mode="markers",
-            marker=dict(
-                size=16, color="#1E90FF", opacity=1.0,
-                symbol="star",
-                line=dict(width=2, color="black"),
-            ),
-            name="Current molecule",
-            text=[_be_explorer_smi],
-            hovertemplate="<b>Current molecule</b><br>%{text}<br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
-        ))
+        # Plot all user molecules: star for selected, circle for others
+        _be_sel_idx = st.session_state.get("explorer_mol_idx", 0) if len(_be_mols) > 1 else 0
+        _be_other_smi, _be_other_name, _be_other_tpsa, _be_other_wlogp = [], [], [], []
+        _be_sel_smi, _be_sel_name, _be_sel_tpsa, _be_sel_wlogp = None, None, None, None
+
+        for _bi, (_b_smi, _b_name, _b_mol) in enumerate(_be_mols):
+            _b_tpsa = Descriptors.TPSA(_b_mol)
+            _b_wlogp = Descriptors.MolLogP(_b_mol)
+            if _bi == _be_sel_idx:
+                _be_sel_smi, _be_sel_name = _b_smi, _b_name
+                _be_sel_tpsa, _be_sel_wlogp = _b_tpsa, _b_wlogp
+            else:
+                _be_other_smi.append(_b_smi)
+                _be_other_name.append(_b_name)
+                _be_other_tpsa.append(_b_tpsa)
+                _be_other_wlogp.append(_b_wlogp)
+
+        # Other user molecules as labeled circles
+        if _be_other_smi:
+            _be_chart.add_trace(go.Scatter(
+                x=_be_other_tpsa, y=_be_other_wlogp,
+                mode="markers+text",
+                marker=dict(size=12, color="#FF6347", opacity=0.9,
+                            line=dict(width=1.5, color="black")),
+                name="Your molecules",
+                text=_be_other_name,
+                textposition="top center",
+                textfont=dict(size=10),
+                hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+            ))
+
+        # Selected molecule as star
+        if _be_sel_smi is not None:
+            _be_chart.add_trace(go.Scatter(
+                x=[_be_sel_tpsa], y=[_be_sel_wlogp],
+                mode="markers+text",
+                marker=dict(size=18, color="#1E90FF", opacity=1.0,
+                            symbol="star",
+                            line=dict(width=2, color="black")),
+                name=f"Selected: {_be_sel_name}",
+                text=[_be_sel_name],
+                textposition="top center",
+                textfont=dict(size=11, color="#1E90FF"),
+                hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+            ))
 
         if _be_has_pipeline and _be_sampled:
-            st.info(f"Showing 300 of {len(_be_df)} molecules")
+            st.info(f"Showing 300 of {len(_be_df)} pipeline molecules")
         st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False}, key="explorer_boiled_egg")
 
         st.caption(
@@ -1788,7 +1853,7 @@ if st.session_state["active_tab"] == "explorer":
                     else:
                         st.info("No molecules in BBB permeability zone.")
         else:
-            st.caption("Your molecule is shown as a star. Grey dots show FDA-approved drugs for reference.")
+            st.caption("Your molecules are shown as colored markers. Grey dots show FDA-approved drugs for reference.")
 
         st.info(
             "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
