@@ -26,27 +26,25 @@ from sklearn.decomposition import PCA
 
 def section_banner(title, color="#c8102e"):
     """Render a red section banner like SwissADME."""
-    st.markdown(f'''
-    <div style="background:{color};color:white;padding:6px 12px;
-                border-radius:6px 6px 0 0;font-weight:600;font-size:1rem;
-                margin-top:20px;margin-bottom:0;">
-        {title}
-    </div>
-    ''', unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="background:{color};color:white;padding:6px 12px;'
+        f'border-radius:6px 6px 0 0;font-weight:600;font-size:1rem;'
+        f'margin-top:20px;margin-bottom:0;">{title}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def compact_table(rows):
-    """Render a compact property table. rows is a list of (label, value) tuples."""
-    html = '<table style="width:100%;border-collapse:collapse;font-size:0.9rem;">'
+    """Render a compact property table (SwissADME style)."""
+    html_parts = ['<table style="width:100%;border-collapse:collapse;font-size:0.9rem;margin-bottom:16px;">']
     for label, value in rows:
-        html += f'''
-        <tr style="border-bottom:1px solid #eee;">
-            <td style="padding:4px 8px;color:#666;width:50%;">{label}</td>
-            <td style="padding:4px 8px;font-weight:500;">{value}</td>
-        </tr>
-        '''
-    html += '</table>'
-    st.markdown(html, unsafe_allow_html=True)
+        html_parts.append(
+            f'<tr style="border-bottom:1px solid #eee;">'
+            f'<td style="padding:4px 8px;color:#666;width:50%;">{label}</td>'
+            f'<td style="padding:4px 8px;font-weight:500;">{value}</td></tr>'
+        )
+    html_parts.append('</table>')
+    st.markdown(''.join(html_parts), unsafe_allow_html=True)
 
 
 def _mol_table_html(rows, smiles_key, extra_keys, img_size=(150, 150)):
