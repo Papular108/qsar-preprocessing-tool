@@ -1776,8 +1776,9 @@ if st.session_state["active_tab"] == "explorer":
                 _be_df, label_col="Activity" if _be_has_labels else None,
             )
         else:
-            _be_fda_smiles, _ = get_fda_approved_drugs()
-            _be_df = _cached_boiled_egg(tuple(_be_fda_smiles), None)
+            # Build diagram from user molecules only (no FDA reference dots)
+            _be_user_smiles = [smi for smi, _name, _mol in _be_mols]
+            _be_df = _cached_boiled_egg(tuple(_be_user_smiles), None)
             _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(_be_df)
 
         # Plot all user molecules: star for selected, circle for others
@@ -1854,7 +1855,7 @@ if st.session_state["active_tab"] == "explorer":
                     else:
                         st.info("No molecules in BBB permeability zone.")
         else:
-            st.caption("Your molecules are shown as colored markers. Grey dots show FDA-approved drugs for reference.")
+            st.caption("Your molecules are shown as labeled dots. The currently selected molecule is highlighted with a star.")
 
         st.info(
             "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
