@@ -5,7 +5,7 @@ from rdkit.Chem import AllChem, MACCSkeys
 from rdkit.Chem.AtomPairs import Pairs, Torsions
 from rdkit.Avalon import pyAvalonTools
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, DataStructs
 
 
 def compute_descriptors(mol):
@@ -159,3 +159,62 @@ def featurize_dataset(mol_list, fp_type="morgan", radius=2, n_bits=2048):
     dataframe = pd.DataFrame(rows)
 
     return dataframe, errors
+
+
+def _mol_to_fp_obj(mol, fp_type="morgan", radius=2, n_bits=2048):
+    """Return an RDKit fingerprint object (not numpy array) for Tanimoto calculation."""
+    if fp_type == "morgan":
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits)
+    elif fp_type == "fcfp":
+        return AllChem.GetMorganFingerprintAsBitVect(mol, radius, nBits=n_bits, useFeatures=True)
+    elif fp_type == "maccs":
+        return MACCSkeys.GenMACCSKeys(mol)
+    elif fp_type == "topological":
+        return Chem.RDKFingerprint(mol, fpSize=n_bits)
+    elif fp_type == "atom_pair":
+        return rdMolDescriptors.GetHashedAtomPairFingerprintAsBitVect(mol, nBits=n_bits)
+    elif fp_type == "torsion":
+        return rdMolDescriptors.GetHashedTopologicalTorsionFingerprintAsBitVect(mol, nBits=n_bits)
+    elif fp_type == "avalon":
+        return pyAvalonTools.GetAvalonFP(mol, nBits=n_bits)
+    elif fp_type == "pattern":
+        return Chem.PatternFingerprint(mol, fpSize=n_bits)
+    elif fp_type == "layered":
+        return Chem.LayeredFingerprint(mol, fpSize=n_bits)
+    return None
+
+
+def find_similar_molecules(query_mol, target_mols, top_n=10, fp_type="morgan", radius=2, n_bits=2048):
+    """
+    Find the most similar molecules to a query using Tanimoto similarity.
+
+    Parameters:
+        query_mol: RDKit Mol object for the query
+        target_mols: list of RDKit Mol objects to search
+        top_n: number of top results to return
+        fp_type: fingerprint type
+        radius: Morgan radius (only for morgan/fcfp)
+        n_bits: fingerprint bit length
+
+    Returns:
+        list of (index, mol, similarity_score) sorted by similarity descending
+    """
+    if not target_mols:
+        return []
+
+    query_fp = _mol_to_fp_obj(query_mol, fp_type, radius, n_bits)
+    if query_fp is None:
+        return []
+
+    results = []
+    for i, mol in enumerate(target_mols):
+        if mol is None:
+            continue
+        target_fp = _mol_to_fp_obj(mol, fp_type, radius, n_bits)
+        if target_fp is None:
+            continue
+        sim = DataStructs.TanimotoSimilarity(query_fp, target_fp)
+        results.append((i, mol, sim))
+
+    results.sort(key=lambda x: x[2], reverse=True)
+    return results[:top_n]

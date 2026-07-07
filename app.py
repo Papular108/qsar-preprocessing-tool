@@ -15,7 +15,7 @@ from pipeline.preprocessing import (
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
     check_pains, check_brenk, compute_qed, analyze_scaffolds,
 )
-from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol
+from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules
 import altair as alt
 from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
 from pipeline.methodology import generate_methods_text
@@ -1828,6 +1828,114 @@ if st.session_state["active_tab"] == "explorer":
             "from SwissADME's WLOGP, which can cause borderline molecules to appear in slightly different zones. "
             "The scientific interpretation remains the same."
         )
+
+    # ── Similarity Search ─────────────────────────────────────────────────────
+    _sim_mols = st.session_state.get("explorer_molecules", [])
+    if _sim_mols:
+        section_banner("Similarity Search")
+
+        _sim_has_pipeline = "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) > 0
+        if not _sim_has_pipeline:
+            st.info("Upload molecules in the Preprocessing tab first to enable similarity search.")
+        else:
+            _sim_sel_idx = st.session_state.get("explorer_mol_idx", 0) if len(_sim_mols) > 1 else 0
+            _sim_query_smi, _sim_query_name, _sim_query_mol = _sim_mols[_sim_sel_idx]
+
+            st.write(f"Query: **{_sim_query_name}** (`{_sim_query_smi[:50]}{'...' if len(_sim_query_smi) > 50 else ''}`)")
+
+            _sim_c1, _sim_c2 = st.columns(2)
+            with _sim_c1:
+                _sim_top_n = st.number_input("Top N results", min_value=1, max_value=50, value=10, key="sim_top_n")
+            with _sim_c2:
+                _sim_fp_type = st.selectbox(
+                    "Fingerprint type",
+                    ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon"],
+                    key="sim_fp_type",
+                )
+
+            if st.button("Find Similar Molecules", type="primary", key="sim_search_btn"):
+                _sim_kept_smiles = st.session_state["pipeline_result"]["kept_smiles"]
+
+                @st.cache_data
+                def _cached_sim_search(query_smi, target_smiles_tuple, top_n, fp_type):
+                    q_mol = Chem.MolFromSmiles(query_smi)
+                    t_mols = [Chem.MolFromSmiles(s) for s in target_smiles_tuple]
+                    hits = find_similar_molecules(q_mol, t_mols, top_n=top_n, fp_type=fp_type)
+                    return [(idx, target_smiles_tuple[idx], score) for idx, _mol, score in hits]
+
+                _sim_results = _cached_sim_search(
+                    _sim_query_smi, tuple(_sim_kept_smiles), _sim_top_n, _sim_fp_type,
+                )
+                st.session_state["sim_results"] = _sim_results
+                st.session_state["sim_query_info"] = (_sim_query_smi, _sim_query_name)
+
+            if "sim_results" in st.session_state and st.session_state.get("sim_query_info"):
+                _sim_results = st.session_state["sim_results"]
+                _sim_kept_smiles = st.session_state["pipeline_result"]["kept_smiles"]
+                _sim_label_map = st.session_state.get("pipeline_label_map", {})
+
+                _sim_above_threshold = sum(1 for _, _, s in _sim_results if s >= 0.4)
+                st.write(f"Found **{_sim_above_threshold}** molecules with similarity \u2265 0.4 to your query.")
+
+                # Results grid
+                for _ri in range(0, len(_sim_results), 2):
+                    _sim_cols = st.columns(2)
+                    for _ci, _col in enumerate(_sim_cols):
+                        _idx_r = _ri + _ci
+                        if _idx_r >= len(_sim_results):
+                            break
+                        _hit_idx, _hit_smi, _hit_score = _sim_results[_idx_r]
+                        _hit_mol = Chem.MolFromSmiles(_hit_smi)
+                        _hit_label = _sim_label_map.get(_hit_smi)
+
+                        if _hit_score > 0.7:
+                            _sim_color = "#2ca02c"
+                        elif _hit_score >= 0.4:
+                            _sim_color = "#ff7f0e"
+                        else:
+                            _sim_color = "#999999"
+
+                        with _col:
+                            st.markdown(
+                                f'<div style="border:2px solid {_sim_color};border-radius:8px;padding:10px;margin-bottom:8px;">'
+                                f'<span style="font-weight:700;font-size:1.1rem;color:{_sim_color};">'
+                                f'#{_idx_r + 1} \u2014 {_hit_score:.1%} similar</span></div>',
+                                unsafe_allow_html=True,
+                            )
+                            if _hit_mol:
+                                st.image(mol_to_image(_hit_mol, size=(150, 150)), width=150)
+                            _trunc = _hit_smi[:45] + ("..." if len(_hit_smi) > 45 else "")
+                            st.code(_trunc, language=None)
+                            if _hit_label:
+                                _badge_c = {"Active": "green", "Intermediate": "orange", "Inactive": "red"}.get(_hit_label, "gray")
+                                st.markdown(
+                                    f'<span style="background:{_badge_c};color:white;padding:2px 8px;border-radius:4px;font-size:12px">{_hit_label}</span>',
+                                    unsafe_allow_html=True,
+                                )
+
+                # Download CSV
+                _dl_rows = []
+                for _ri, (_hit_idx, _hit_smi, _hit_score) in enumerate(_sim_results):
+                    _row = {"Rank": _ri + 1, "SMILES": _hit_smi, "Tanimoto_Similarity": round(_hit_score, 4)}
+                    _lbl = _sim_label_map.get(_hit_smi)
+                    if _lbl:
+                        _row["Activity_Label"] = _lbl
+                    _dl_rows.append(_row)
+                _dl_df = pd.DataFrame(_dl_rows)
+                st.download_button(
+                    "Download similarity results as CSV",
+                    data=_dl_df.to_csv(index=False),
+                    file_name="similarity_results.csv",
+                    mime="text/csv",
+                    key="sim_download",
+                )
+
+                st.caption(
+                    "Tanimoto similarity ranges from 0 (no shared features) to 1 (identical). "
+                    "In drug discovery: Tanimoto > 0.85 usually indicates near-duplicates or same scaffold, "
+                    "0.4\u20130.7 indicates analogs, < 0.3 indicates structurally different molecules. "
+                    "The 'activity cliff' phenomenon is when similar structures have very different activities."
+                )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: Filter Comparison

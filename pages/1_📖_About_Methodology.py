@@ -110,6 +110,38 @@ st.write(
     """
 )
 
+st.header("Similarity Search (Tanimoto)")
+st.write(
+    """
+    The Similarity Search feature in Molecule Explorer finds the most similar molecules
+    in your preprocessed dataset to a query molecule, using Tanimoto similarity on
+    molecular fingerprints.
+
+    **Tanimoto coefficient** (also called Jaccard index for bit vectors) measures the
+    overlap between two fingerprints:
+
+    `Tanimoto(A, B) = |A ∩ B| / |A ∪ B|`
+
+    where |A ∩ B| is the number of bits set in both fingerprints and |A ∪ B| is the
+    number of bits set in either. The score ranges from 0 (no shared features) to 1
+    (identical fingerprints).
+
+    **Interpretation guidelines:**
+    - **> 0.85**: Near-duplicates or same Murcko scaffold; likely same chemical series
+    - **0.7 – 0.85**: Close analogs; often share the same core with minor substitutions
+    - **0.4 – 0.7**: Moderate similarity; may share pharmacophoric features
+    - **< 0.4**: Structurally dissimilar; different scaffolds
+
+    **Activity cliffs** occur when structurally similar molecules (high Tanimoto) have
+    very different biological activities. These are important for SAR analysis — small
+    structural changes that dramatically affect potency can reveal key binding interactions.
+
+    The fingerprint type matters: Morgan (ECFP) fingerprints tend to give lower similarity
+    scores than MACCS keys for the same molecule pair, because Morgan captures finer
+    structural detail. Choose the fingerprint type that matches your downstream ML model.
+    """
+)
+
 st.header("Descriptor glossary")
 st.write(
     """
