@@ -53,16 +53,16 @@ def plot_boiled_egg(mols_df, label_col=None):
     """
     import plotly.graph_objects as go
 
-    # Ellipse parameters from Daina & Zoete 2016
-    GI_CX, GI_CY = 2.740, 69.105
-    GI_A, GI_B = 3.600, 69.105
-    BBB_CX, BBB_CY = 1.466, 26.278
-    BBB_A, BBB_B = 2.400, 33.000
+    # Ellipse parameters from Daina & Zoete 2016 (axes: x=TPSA, y=WLOGP)
+    GI_CX, GI_CY = 71.051, 2.292   # center: TPSA, WLOGP
+    GI_A, GI_B = 59.0, 3.542       # semi-axes: TPSA, WLOGP
+    BBB_CX, BBB_CY = 38.117, 1.903
+    BBB_A, BBB_B = 25.0, 2.023
 
     # Classify molecules
     df = mols_df.copy()
-    df["in_GI"] = df.apply(lambda r: _point_in_ellipse(r["WLOGP"], r["TPSA"], GI_CX, GI_CY, GI_A, GI_B), axis=1)
-    df["in_BBB"] = df.apply(lambda r: _point_in_ellipse(r["WLOGP"], r["TPSA"], BBB_CX, BBB_CY, BBB_A, BBB_B), axis=1)
+    df["in_GI"] = df.apply(lambda r: _point_in_ellipse(r["TPSA"], r["WLOGP"], GI_CX, GI_CY, GI_A, GI_B), axis=1)
+    df["in_BBB"] = df.apply(lambda r: _point_in_ellipse(r["TPSA"], r["WLOGP"], BBB_CX, BBB_CY, BBB_A, BBB_B), axis=1)
     n_gi = int(df["in_GI"].sum())
     n_bbb = int(df["in_BBB"].sum())
 
@@ -79,9 +79,9 @@ def plot_boiled_egg(mols_df, label_col=None):
     # Draw ellipses — axes: X=TPSA, Y=WLOGP (SwissADME horizontal layout)
     theta = np.linspace(0, 2 * np.pi, 300)
 
-    # GI ellipse (egg white) — center: TPSA=69.105, WLOGP=2.740
-    gi_x = 69.105 + 69.105 * np.cos(theta)  # TPSA
-    gi_y = 2.740 + 3.600 * np.sin(theta)     # WLOGP
+    # GI ellipse (egg white) — center: TPSA=71.051, WLOGP=2.292
+    gi_x = 71.051 + 59.0 * np.cos(theta)    # TPSA
+    gi_y = 2.292 + 3.542 * np.sin(theta)     # WLOGP
     fig.add_trace(go.Scatter(
         x=gi_x.tolist(), y=gi_y.tolist(), fill='toself',
         fillcolor='rgba(230,230,230,0.6)',
@@ -89,9 +89,9 @@ def plot_boiled_egg(mols_df, label_col=None):
         name='GI absorption', showlegend=True, hoverinfo='skip',
     ))
 
-    # BBB ellipse (yolk) — center: TPSA=26.278, WLOGP=1.466
-    bbb_x = 26.278 + 33.000 * np.cos(theta)  # TPSA
-    bbb_y = 1.466 + 2.400 * np.sin(theta)     # WLOGP
+    # BBB ellipse (yolk) — center: TPSA=38.117, WLOGP=1.903
+    bbb_x = 38.117 + 25.0 * np.cos(theta)   # TPSA
+    bbb_y = 1.903 + 2.023 * np.sin(theta)    # WLOGP
     fig.add_trace(go.Scatter(
         x=bbb_x.tolist(), y=bbb_y.tolist(), fill='toself',
         fillcolor='rgba(255,215,0,0.6)',
@@ -142,7 +142,7 @@ def plot_boiled_egg(mols_df, label_col=None):
         height=550,
         xaxis=dict(
             title=dict(text='TPSA (\u00c5\u00b2)', font=dict(size=14)),
-            range=[-10, 200],
+            range=[-5, 200],
             gridcolor='rgba(0,0,0,0.05)',
             zeroline=False,
             showgrid=True,
@@ -150,7 +150,7 @@ def plot_boiled_egg(mols_df, label_col=None):
         ),
         yaxis=dict(
             title=dict(text='WLOGP (Lipophilicity)', font=dict(size=14)),
-            range=[-3, 8],
+            range=[-3, 7],
             gridcolor='rgba(0,0,0,0.05)',
             zeroline=False,
             showgrid=True,
