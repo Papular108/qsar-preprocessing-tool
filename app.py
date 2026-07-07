@@ -1863,6 +1863,11 @@ if st.session_state["active_tab"] == "explorer":
             "It is a simple but widely used heuristic \u2014 not a substitute for experimental ADMET data.",
             icon="\u2139\uFE0F",
         )
+        st.caption(
+            "Note: WLOGP is computed using RDKit's Crippen implementation. Values may differ by ~0.1\u20130.3 units "
+            "from SwissADME's WLOGP, which can cause borderline molecules to appear in slightly different zones. "
+            "The scientific interpretation remains the same."
+        )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: Filter Comparison
