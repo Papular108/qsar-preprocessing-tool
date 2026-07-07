@@ -15,12 +15,12 @@ from pipeline.preprocessing import (
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
     check_pains, check_brenk, compute_qed, analyze_scaffolds,
 )
-from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules
+from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules, batch_similarity_search
 import altair as alt
 from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
 from pipeline.methodology import generate_methods_text
 from pipeline.pains_catalog import get_pains_explanation, get_brenk_explanation
-from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
+from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_dpp4_inhibitors
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
@@ -1830,112 +1830,284 @@ if st.session_state["active_tab"] == "explorer":
         )
 
     # ── Similarity Search ─────────────────────────────────────────────────────
-    _sim_mols = st.session_state.get("explorer_molecules", [])
-    if _sim_mols:
-        section_banner("Similarity Search")
+    section_banner("Similarity Search")
+    st.caption("Compare reference molecules against a target dataset using Tanimoto similarity on molecular fingerprints.")
 
-        _sim_has_pipeline = "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) > 0
-        if not _sim_has_pipeline:
-            st.info("Upload molecules in the Preprocessing tab first to enable similarity search.")
+    # --- Input panels: Reference (left) | Target (right) ---
+    _sim_ref_col, _sim_tgt_col = st.columns(2)
+
+    with _sim_ref_col:
+        st.markdown("**Reference set**")
+        # Quick-load buttons
+        _SIM_REF_PRESETS = {
+            "FDA-approved drugs": get_fda_approved_drugs,
+            "DPP-4 inhibitors": get_dpp4_inhibitors,
+        }
+        _sim_preset_cols = st.columns(len(_SIM_REF_PRESETS))
+        for _pc, (_pname, _pfunc) in zip(_sim_preset_cols, _SIM_REF_PRESETS.items()):
+            if _pc.button(_pname, key=f"sim_preset_{_pname}", use_container_width=True):
+                _p_smiles, _ = _pfunc()
+                st.session_state["sim_ref_input"] = "\n".join(_p_smiles)
+                st.rerun()
+
+        if "sim_ref_input" not in st.session_state:
+            st.session_state["sim_ref_input"] = ""
+        _sim_ref_text = st.text_area(
+            "Paste reference SMILES (one per line, optional name after space)",
+            placeholder="CC(=O)Oc1ccccc1C(=O)O Aspirin\nCC(C)Cc1ccc(cc1)C(C)C(=O)O Ibuprofen",
+            key="sim_ref_input",
+            height=150,
+        )
+
+    with _sim_tgt_col:
+        st.markdown("**Target dataset**")
+        _sim_tgt_source = st.radio(
+            "Source",
+            ["Pipeline kept molecules", "Upload file"],
+            key="sim_tgt_source",
+            horizontal=True,
+        )
+        _sim_target_smiles = []
+        _sim_target_labels = {}
+        if _sim_tgt_source == "Pipeline kept molecules":
+            if "pipeline_result" in st.session_state and st.session_state["pipeline_result"]["kept_smiles"]:
+                _sim_target_smiles = st.session_state["pipeline_result"]["kept_smiles"]
+                _sim_target_labels = st.session_state.get("pipeline_label_map", {})
+                st.success(f"{len(_sim_target_smiles)} molecules from pipeline")
+            else:
+                st.info("Run the preprocessing pipeline first.")
         else:
-            _sim_sel_idx = st.session_state.get("explorer_mol_idx", 0) if len(_sim_mols) > 1 else 0
-            _sim_query_smi, _sim_query_name, _sim_query_mol = _sim_mols[_sim_sel_idx]
-
-            st.write(f"Query: **{_sim_query_name}** (`{_sim_query_smi[:50]}{'...' if len(_sim_query_smi) > 50 else ''}`)")
-
-            _sim_c1, _sim_c2 = st.columns(2)
-            with _sim_c1:
-                _sim_top_n = st.number_input("Top N results", min_value=1, max_value=50, value=10, key="sim_top_n")
-            with _sim_c2:
-                _sim_fp_type = st.selectbox(
-                    "Fingerprint type",
-                    ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon"],
-                    key="sim_fp_type",
-                )
-
-            if st.button("Find Similar Molecules", type="primary", key="sim_search_btn"):
-                _sim_kept_smiles = st.session_state["pipeline_result"]["kept_smiles"]
-
-                @st.cache_data
-                def _cached_sim_search(query_smi, target_smiles_tuple, top_n, fp_type):
-                    q_mol = Chem.MolFromSmiles(query_smi)
-                    t_mols = [Chem.MolFromSmiles(s) for s in target_smiles_tuple]
-                    hits = find_similar_molecules(q_mol, t_mols, top_n=top_n, fp_type=fp_type)
-                    return [(idx, target_smiles_tuple[idx], score) for idx, _mol, score in hits]
-
-                _sim_results = _cached_sim_search(
-                    _sim_query_smi, tuple(_sim_kept_smiles), _sim_top_n, _sim_fp_type,
-                )
-                st.session_state["sim_results"] = _sim_results
-                st.session_state["sim_query_info"] = (_sim_query_smi, _sim_query_name)
-
-            if "sim_results" in st.session_state and st.session_state.get("sim_query_info"):
-                _sim_results = st.session_state["sim_results"]
-                _sim_kept_smiles = st.session_state["pipeline_result"]["kept_smiles"]
-                _sim_label_map = st.session_state.get("pipeline_label_map", {})
-
-                _sim_above_threshold = sum(1 for _, _, s in _sim_results if s >= 0.4)
-                st.write(f"Found **{_sim_above_threshold}** molecules with similarity \u2265 0.4 to your query.")
-
-                # Results grid
-                for _ri in range(0, len(_sim_results), 2):
-                    _sim_cols = st.columns(2)
-                    for _ci, _col in enumerate(_sim_cols):
-                        _idx_r = _ri + _ci
-                        if _idx_r >= len(_sim_results):
+            _sim_tgt_file = st.file_uploader(
+                "Upload .txt / .csv / .xlsx",
+                type=["txt", "csv", "xlsx"],
+                key="sim_tgt_file",
+            )
+            if _sim_tgt_file is not None:
+                _sim_fname = _sim_tgt_file.name.lower()
+                if _sim_fname.endswith(".csv"):
+                    _sim_tgt_df = pd.read_csv(_sim_tgt_file)
+                elif _sim_fname.endswith(".xlsx"):
+                    _sim_tgt_df = pd.read_excel(_sim_tgt_file)
+                else:
+                    _sim_tgt_df = None
+                    _sim_content = _sim_tgt_file.read().decode("utf-8")
+                    _sim_target_smiles = [l.strip() for l in _sim_content.splitlines() if l.strip()]
+                if _sim_tgt_df is not None:
+                    _sim_scol = None
+                    for _c in ["canonical_smiles", "Smiles", "SMILES", "smiles"]:
+                        if _c in _sim_tgt_df.columns:
+                            _sim_scol = _c
                             break
-                        _hit_idx, _hit_smi, _hit_score = _sim_results[_idx_r]
-                        _hit_mol = Chem.MolFromSmiles(_hit_smi)
-                        _hit_label = _sim_label_map.get(_hit_smi)
+                    if _sim_scol is None and len(_sim_tgt_df.columns) > 0:
+                        _sim_scol = st.selectbox("SMILES column", _sim_tgt_df.columns.tolist(), key="sim_tgt_scol")
+                    if _sim_scol:
+                        _sim_target_smiles = _sim_tgt_df[_sim_scol].dropna().astype(str).tolist()
+                if _sim_target_smiles:
+                    st.success(f"{len(_sim_target_smiles)} molecules loaded")
 
-                        if _hit_score > 0.7:
-                            _sim_color = "#2ca02c"
-                        elif _hit_score >= 0.4:
-                            _sim_color = "#ff7f0e"
+    # --- Settings ---
+    _sim_s1, _sim_s2, _sim_s3 = st.columns(3)
+    with _sim_s1:
+        _sim_threshold = st.number_input("Similarity threshold", min_value=0.0, max_value=1.0, value=0.4, step=0.05, key="sim_threshold")
+    with _sim_s2:
+        _sim_top_n = st.number_input("Top N per reference", min_value=1, max_value=50, value=5, key="sim_top_n")
+    with _sim_s3:
+        _sim_fp_type = st.selectbox(
+            "Fingerprint type",
+            ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon"],
+            key="sim_fp_type",
+        )
+
+    # --- Run ---
+    if st.button("Run Similarity Search", type="primary", key="sim_search_btn"):
+        # Parse reference molecules
+        _sim_refs = []
+        if _sim_ref_text and _sim_ref_text.strip():
+            for _li, _line in enumerate(_sim_ref_text.strip().splitlines()):
+                _line = _line.strip()
+                if not _line:
+                    continue
+                _parts = _line.split(None, 1)
+                _smi = _parts[0]
+                _name = _parts[1] if len(_parts) > 1 else f"Ref {_li + 1}"
+                _mol = Chem.MolFromSmiles(_smi)
+                if _mol:
+                    _sim_refs.append((_name, _smi, _mol))
+                else:
+                    st.error(f"Could not parse: `{_smi}`")
+
+        if not _sim_refs:
+            st.warning("Paste at least one valid reference SMILES.")
+        elif not _sim_target_smiles:
+            st.warning("No target molecules available. Load pipeline results or upload a file.")
+        else:
+            with st.spinner("Computing fingerprints and similarities..."):
+                @st.cache_data
+                def _cached_batch_sim(ref_tuples, target_smi_tuple, top_n, threshold, fp_type):
+                    q_mols = [(n, Chem.MolFromSmiles(s)) for n, s in ref_tuples]
+                    t_mols = [Chem.MolFromSmiles(s) for s in target_smi_tuple]
+                    return batch_similarity_search(
+                        q_mols, t_mols, top_n=top_n, threshold=threshold, fp_type=fp_type,
+                    )
+
+                _ref_tuples = tuple((n, s) for n, s, _m in _sim_refs)
+                _batch_results = _cached_batch_sim(
+                    _ref_tuples, tuple(_sim_target_smiles),
+                    _sim_top_n, _sim_threshold, _sim_fp_type,
+                )
+            st.session_state["batch_sim_results"] = _batch_results
+            st.session_state["batch_sim_refs"] = [(n, s) for n, s, _m in _sim_refs]
+            st.session_state["batch_sim_targets"] = list(_sim_target_smiles)
+
+    # --- Display results ---
+    if "batch_sim_results" in st.session_state:
+        _bsr = st.session_state["batch_sim_results"]
+        _bsr_refs = st.session_state["batch_sim_refs"]
+        _bsr_targets = st.session_state["batch_sim_targets"]
+        _bsr_label_map = st.session_state.get("pipeline_label_map", {})
+
+        _total_hits = sum(len(v) for v in _bsr.values())
+        st.write(f"**{_total_hits}** hits across **{len(_bsr_refs)}** reference molecules (threshold \u2265 {_sim_threshold})")
+
+        # Per-reference results
+        for _ref_name, _ref_smi in _bsr_refs:
+            _ref_hits = _bsr.get(_ref_name, [])
+            _ref_mol = Chem.MolFromSmiles(_ref_smi)
+            with st.expander(f"{_ref_name} \u2014 {len(_ref_hits)} hits", expanded=len(_bsr_refs) <= 5):
+                # Reference molecule header
+                _rh_img, _rh_info = st.columns([1, 3])
+                with _rh_img:
+                    if _ref_mol:
+                        st.image(mol_to_image(_ref_mol, size=(120, 120)), width=120)
+                with _rh_info:
+                    st.code(_ref_smi[:60] + ("..." if len(_ref_smi) > 60 else ""), language=None)
+
+                if not _ref_hits:
+                    st.info("No targets above similarity threshold.")
+                    continue
+
+                # Hit cards in 2-column grid
+                for _hi in range(0, len(_ref_hits), 2):
+                    _hcols = st.columns(2)
+                    for _ci, _hcol in enumerate(_hcols):
+                        _hidx = _hi + _ci
+                        if _hidx >= len(_ref_hits):
+                            break
+                        _t_idx, _t_score = _ref_hits[_hidx]
+                        _t_smi = _bsr_targets[_t_idx]
+                        _t_mol = Chem.MolFromSmiles(_t_smi)
+                        _t_label = _bsr_label_map.get(_t_smi)
+
+                        if _t_score > 0.7:
+                            _sc = "#2ca02c"
+                        elif _t_score >= 0.4:
+                            _sc = "#ff7f0e"
                         else:
-                            _sim_color = "#999999"
+                            _sc = "#999999"
 
-                        with _col:
+                        with _hcol:
                             st.markdown(
-                                f'<div style="border:2px solid {_sim_color};border-radius:8px;padding:10px;margin-bottom:8px;">'
-                                f'<span style="font-weight:700;font-size:1.1rem;color:{_sim_color};">'
-                                f'#{_idx_r + 1} \u2014 {_hit_score:.1%} similar</span></div>',
+                                f'<div style="border-left:4px solid {_sc};padding:4px 8px;margin-bottom:4px;">'
+                                f'<span style="font-weight:700;color:{_sc};">{_t_score:.1%}</span></div>',
                                 unsafe_allow_html=True,
                             )
-                            if _hit_mol:
-                                st.image(mol_to_image(_hit_mol, size=(150, 150)), width=150)
-                            _trunc = _hit_smi[:45] + ("..." if len(_hit_smi) > 45 else "")
+                            if _t_mol:
+                                st.image(mol_to_image(_t_mol, size=(130, 130)), width=130)
+                            _trunc = _t_smi[:45] + ("..." if len(_t_smi) > 45 else "")
                             st.code(_trunc, language=None)
-                            if _hit_label:
-                                _badge_c = {"Active": "green", "Intermediate": "orange", "Inactive": "red"}.get(_hit_label, "gray")
+                            if _t_label:
+                                _bc = {"Active": "green", "Intermediate": "orange", "Inactive": "red"}.get(_t_label, "gray")
                                 st.markdown(
-                                    f'<span style="background:{_badge_c};color:white;padding:2px 8px;border-radius:4px;font-size:12px">{_hit_label}</span>',
+                                    f'<span style="background:{_bc};color:white;padding:2px 8px;'
+                                    f'border-radius:4px;font-size:12px">{_t_label}</span>',
                                     unsafe_allow_html=True,
                                 )
 
-                # Download CSV
-                _dl_rows = []
-                for _ri, (_hit_idx, _hit_smi, _hit_score) in enumerate(_sim_results):
-                    _row = {"Rank": _ri + 1, "SMILES": _hit_smi, "Tanimoto_Similarity": round(_hit_score, 4)}
-                    _lbl = _sim_label_map.get(_hit_smi)
-                    if _lbl:
-                        _row["Activity_Label"] = _lbl
-                    _dl_rows.append(_row)
-                _dl_df = pd.DataFrame(_dl_rows)
-                st.download_button(
-                    "Download similarity results as CSV",
-                    data=_dl_df.to_csv(index=False),
-                    file_name="similarity_results.csv",
-                    mime="text/csv",
-                    key="sim_download",
+        # Heatmap
+        if len(_bsr_refs) > 1 and _total_hits > 0:
+            st.subheader("Similarity Heatmap")
+            # Collect all unique target indices that appear in any result
+            _all_hit_idxs = sorted({idx for hits in _bsr.values() for idx, _ in hits})
+            if _all_hit_idxs:
+                _heat_rows = []
+                for _ref_name, _ref_smi in _bsr_refs:
+                    _hit_map = {idx: score for idx, score in _bsr.get(_ref_name, [])}
+                    for _tidx in _all_hit_idxs:
+                        _t_smi = _bsr_targets[_tidx]
+                        _t_short = _t_smi[:25] + ("..." if len(_t_smi) > 25 else "")
+                        _heat_rows.append({
+                            "Reference": _ref_name,
+                            "Target": _t_short,
+                            "Tanimoto": _hit_map.get(_tidx, 0.0),
+                        })
+                _heat_df = pd.DataFrame(_heat_rows)
+                _heat_chart = (
+                    alt.Chart(_heat_df)
+                    .mark_rect()
+                    .encode(
+                        x=alt.X("Target:N", title=None, sort=None),
+                        y=alt.Y("Reference:N", title=None, sort=None),
+                        color=alt.Color(
+                            "Tanimoto:Q",
+                            scale=alt.Scale(domain=[0, 0.4, 0.7, 1.0], range=["#f0f0f0", "#fee08b", "#fdae61", "#2ca02c"]),
+                            legend=alt.Legend(title="Tanimoto"),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("Reference:N"),
+                            alt.Tooltip("Target:N"),
+                            alt.Tooltip("Tanimoto:Q", format=".3f"),
+                        ],
+                    )
+                )
+                _heat_text = (
+                    alt.Chart(_heat_df)
+                    .mark_text(fontSize=10)
+                    .encode(
+                        x=alt.X("Target:N", sort=None),
+                        y=alt.Y("Reference:N", sort=None),
+                        text=alt.Text("Tanimoto:Q", format=".2f"),
+                        color=alt.condition("datum.Tanimoto > 0.6", alt.value("white"), alt.value("#333")),
+                    )
+                )
+                st.altair_chart(
+                    (_heat_chart + _heat_text).properties(
+                        height=max(len(_bsr_refs) * 35, 120),
+                    ),
+                    use_container_width=True,
                 )
 
-                st.caption(
-                    "Tanimoto similarity ranges from 0 (no shared features) to 1 (identical). "
-                    "In drug discovery: Tanimoto > 0.85 usually indicates near-duplicates or same scaffold, "
-                    "0.4\u20130.7 indicates analogs, < 0.3 indicates structurally different molecules. "
-                    "The 'activity cliff' phenomenon is when similar structures have very different activities."
-                )
+        # Download CSV
+        _dl_rows = []
+        for _ref_name, _ref_smi in _bsr_refs:
+            for _rank, (_t_idx, _t_score) in enumerate(_bsr.get(_ref_name, []), 1):
+                _t_smi = _bsr_targets[_t_idx]
+                _row = {
+                    "Reference": _ref_name,
+                    "Reference_SMILES": _ref_smi,
+                    "Rank": _rank,
+                    "Target_SMILES": _t_smi,
+                    "Tanimoto_Similarity": round(_t_score, 4),
+                }
+                _lbl = _bsr_label_map.get(_t_smi)
+                if _lbl:
+                    _row["Activity_Label"] = _lbl
+                _dl_rows.append(_row)
+        if _dl_rows:
+            _dl_df = pd.DataFrame(_dl_rows)
+            st.download_button(
+                "Download similarity results as CSV",
+                data=_dl_df.to_csv(index=False),
+                file_name="similarity_results.csv",
+                mime="text/csv",
+                key="sim_download",
+            )
+
+        st.caption(
+            "Tanimoto similarity ranges from 0 (no shared features) to 1 (identical). "
+            "In drug discovery: Tanimoto > 0.85 usually indicates near-duplicates or same scaffold, "
+            "0.4\u20130.7 indicates analogs, < 0.3 indicates structurally different molecules. "
+            "The 'activity cliff' phenomenon is when similar structures have very different activities."
+        )
 
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 3: Filter Comparison

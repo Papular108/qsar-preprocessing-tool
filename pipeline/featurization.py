@@ -218,3 +218,53 @@ def find_similar_molecules(query_mol, target_mols, top_n=10, fp_type="morgan", r
 
     results.sort(key=lambda x: x[2], reverse=True)
     return results[:top_n]
+
+
+def batch_similarity_search(query_mols, target_mols, top_n=5, threshold=0.4,
+                            fp_type="morgan", radius=2, n_bits=2048):
+    """
+    Search multiple reference molecules against a target set.
+
+    Computes target fingerprints once for efficiency.
+
+    Parameters:
+        query_mols: list of (name, RDKit Mol) tuples
+        target_mols: list of RDKit Mol objects
+        top_n: max hits per query
+        threshold: minimum Tanimoto to include
+        fp_type, radius, n_bits: fingerprint settings
+
+    Returns:
+        dict mapping query_name -> list of (target_index, similarity) sorted descending
+    """
+    if not target_mols or not query_mols:
+        return {}
+
+    # Pre-compute target fingerprints once
+    target_fps = []
+    for mol in target_mols:
+        if mol is not None:
+            target_fps.append(_mol_to_fp_obj(mol, fp_type, radius, n_bits))
+        else:
+            target_fps.append(None)
+
+    results = {}
+    for name, q_mol in query_mols:
+        if q_mol is None:
+            results[name] = []
+            continue
+        q_fp = _mol_to_fp_obj(q_mol, fp_type, radius, n_bits)
+        if q_fp is None:
+            results[name] = []
+            continue
+        hits = []
+        for i, t_fp in enumerate(target_fps):
+            if t_fp is None:
+                continue
+            sim = DataStructs.TanimotoSimilarity(q_fp, t_fp)
+            if sim >= threshold:
+                hits.append((i, sim))
+        hits.sort(key=lambda x: x[1], reverse=True)
+        results[name] = hits[:top_n]
+
+    return results

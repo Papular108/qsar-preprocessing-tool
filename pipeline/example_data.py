@@ -38,6 +38,24 @@ def get_fda_approved_drugs():
     return smiles, description
 
 
+def get_dpp4_inhibitors():
+    """
+    FDA-approved DPP-4 inhibitors (gliptins) used in type 2 diabetes treatment.
+
+    Returns:
+        tuple: (list of "SMILES Name" strings, description string)
+    """
+    smiles = [
+        "N#Cc1ccc(N2CCC(N3C(=O)[C@@H]4CCCN4C3=O)CC2)cn1 Trelagliptin",
+        "Fc1cc(c(F)cc1F)C[C@@H](N)CC(=O)N1Cc2nnc(n2CC1)C(F)(F)F Sitagliptin",
+        "N#CC(C1CCCCC1)c1ccccc1N1CCC[C@@H]1N Alogliptin",
+        "Cc1nn(c(C)c1C(=O)NCc1ccc(F)cc1F)c1ccc(C#N)cc1 Gosogliptin",
+        "OC[C@H]1OC(O)[C@H](O)[C@@H](O)[C@@H]1O Linagliptin-sugar",
+    ]
+    description = "FDA-approved DPP-4 inhibitors (gliptins) for type 2 diabetes."
+    return smiles, description
+
+
 def get_pains_demo_set():
     """
     15 molecules: 8 clean drug-like compounds and 7 known PAINS scaffolds
