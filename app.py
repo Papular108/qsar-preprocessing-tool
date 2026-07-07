@@ -200,13 +200,14 @@ with st.container(key="nav_cards"):
             if is_active:
                 st.markdown('<div class="nav-active">', unsafe_allow_html=True)
             if st.button(
-                f"{icon}\n{title}\n{subtitle}",
+                f"{icon} {title}",
                 key=f"nav_{key}",
                 use_container_width=True,
             ):
                 if not is_active:
                     st.session_state["active_tab"] = key
                     st.rerun()
+            st.caption(subtitle)
             if is_active:
                 st.markdown('</div>', unsafe_allow_html=True)
 
