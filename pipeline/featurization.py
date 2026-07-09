@@ -268,3 +268,116 @@ def batch_similarity_search(query_mols, target_mols, top_n=5, threshold=0.4,
         results[name] = hits[:top_n]
 
     return results
+
+
+def multi_reference_similarity(ref_mols, target_mols, target_smiles,
+                               top_n=10, threshold=0.4,
+                               fp_type="morgan", radius=2, n_bits=2048):
+    """
+    Screen a target dataset against multiple reference molecules.
+
+    Parameters:
+        ref_mols: list of (name, RDKit Mol) tuples
+        target_mols: list of RDKit Mol objects
+        target_smiles: list of SMILES strings (parallel to target_mols)
+        top_n: max hits per reference
+        threshold: minimum Tanimoto to include
+        fp_type, radius, n_bits: fingerprint settings
+
+    Returns:
+        dict with keys:
+            "per_reference": list of dicts with ref_name, ref_smiles, hits
+            "all_hits": DataFrame [Target_SMILES, Best_Reference, Similarity, Target_Index]
+            "similarity_matrix": DataFrame (refs x targets above threshold)
+            "stats": dict with total_targets, targets_above_threshold, avg_similarity
+    """
+    if not target_mols or not ref_mols:
+        return {"per_reference": [], "all_hits": pd.DataFrame(),
+                "similarity_matrix": pd.DataFrame(),
+                "stats": {"total_targets": 0, "targets_above_threshold": 0, "avg_similarity": 0.0}}
+
+    # Pre-compute target fingerprints once
+    target_fps = []
+    for mol in target_mols:
+        if mol is not None:
+            target_fps.append(_mol_to_fp_obj(mol, fp_type, radius, n_bits))
+        else:
+            target_fps.append(None)
+
+    per_reference = []
+    # Track best similarity per target across all refs
+    best_per_target = {}  # target_index -> (best_sim, best_ref_name)
+    # For heatmap matrix
+    matrix_data = {}  # ref_name -> {target_idx: sim}
+
+    for ref_name, ref_mol in ref_mols:
+        if ref_mol is None:
+            per_reference.append({"ref_name": ref_name, "ref_smiles": "", "hits": []})
+            continue
+        ref_smiles_str = Chem.MolToSmiles(ref_mol)
+        ref_fp = _mol_to_fp_obj(ref_mol, fp_type, radius, n_bits)
+        if ref_fp is None:
+            per_reference.append({"ref_name": ref_name, "ref_smiles": ref_smiles_str, "hits": []})
+            continue
+
+        hits = []
+        ref_sims = {}
+        for i, t_fp in enumerate(target_fps):
+            if t_fp is None:
+                continue
+            sim = DataStructs.TanimotoSimilarity(ref_fp, t_fp)
+            if sim >= threshold:
+                hits.append({"target_smiles": target_smiles[i], "similarity": round(sim, 4),
+                             "target_index": i})
+                ref_sims[i] = round(sim, 4)
+                if i not in best_per_target or sim > best_per_target[i][0]:
+                    best_per_target[i] = (sim, ref_name)
+
+        hits.sort(key=lambda x: x["similarity"], reverse=True)
+        per_reference.append({
+            "ref_name": ref_name,
+            "ref_smiles": ref_smiles_str,
+            "hits": hits[:top_n],
+        })
+        matrix_data[ref_name] = ref_sims
+
+    # Build all_hits DataFrame
+    all_rows = []
+    for tidx, (best_sim, best_ref) in best_per_target.items():
+        all_rows.append({
+            "Target_SMILES": target_smiles[tidx],
+            "Best_Reference": best_ref,
+            "Similarity": round(best_sim, 4),
+            "Target_Index": tidx,
+        })
+    all_hits_df = pd.DataFrame(all_rows)
+    if len(all_hits_df) > 0:
+        all_hits_df = all_hits_df.sort_values("Similarity", ascending=False).reset_index(drop=True)
+
+    # Build similarity matrix for heatmap (refs x unique targets above threshold)
+    if best_per_target:
+        target_indices = sorted(best_per_target.keys())
+        matrix_rows = []
+        for ref_name, ref_mol in ref_mols:
+            row = {"Reference": ref_name}
+            sims = matrix_data.get(ref_name, {})
+            for tidx in target_indices:
+                row[target_smiles[tidx]] = sims.get(tidx, 0.0)
+            matrix_rows.append(row)
+        sim_matrix_df = pd.DataFrame(matrix_rows).set_index("Reference")
+    else:
+        sim_matrix_df = pd.DataFrame()
+
+    avg_sim = float(all_hits_df["Similarity"].mean()) if len(all_hits_df) > 0 else 0.0
+    stats = {
+        "total_targets": len(target_mols),
+        "targets_above_threshold": len(best_per_target),
+        "avg_similarity": round(avg_sim, 4),
+    }
+
+    return {
+        "per_reference": per_reference,
+        "all_hits": all_hits_df,
+        "similarity_matrix": sim_matrix_df,
+        "stats": stats,
+    }

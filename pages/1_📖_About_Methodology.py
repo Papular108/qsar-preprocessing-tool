@@ -142,6 +142,132 @@ st.write(
     """
 )
 
+st.header("Multi-Reference Similarity Screening")
+st.write(
+    """
+    The Similarity Screening tab extends single-query similarity search into a
+    virtual screening workflow. You provide a **set of reference molecules**
+    (e.g., known actives, lead compounds) and a **target library** (e.g., a
+    vendor catalog or your preprocessed dataset), and the tool computes Tanimoto
+    similarity between every reference-target pair.
+
+    **Key outputs:**
+    - **Per-reference hit list:** the top-N most similar targets for each reference,
+      ranked by Tanimoto score
+    - **All-hits table:** a deduplicated list of every target that exceeded the
+      similarity threshold for at least one reference, annotated with its best-matching
+      reference and similarity score
+    - **Similarity heatmap:** a color-coded matrix (references x targets) showing
+      pairwise similarities at a glance — useful for spotting clusters of related
+      compounds and identifying which references share common hits
+    - **Downloadable CSV:** the all-hits table can be exported for downstream analysis
+
+    **When to use this:**
+    - **Hit expansion:** given a few confirmed actives, find structurally similar
+      compounds in a larger library that may also be active
+    - **SAR exploration:** compare multiple analogs against a common target set to
+      understand structure-activity relationships
+    - **Library profiling:** assess how well a screening library covers the chemical
+      space around your references
+
+    All fingerprint types supported elsewhere (Morgan, FCFP, MACCS, topological,
+    atom pair, torsion, avalon) are available here. Target fingerprints are computed
+    once and reused across all references for efficiency.
+    """
+)
+
+st.header("Train/Test Splitting")
+st.write(
+    """
+    The Train/Test Split tab generates train/test partitions for QSAR modeling.
+    Three strategies are available:
+
+    **Scaffold split (recommended for QSAR benchmarking):**
+    Molecules are grouped by their Bemis-Murcko scaffold — the core ring system
+    with linkers, but stripped of side chains. No scaffold appears in both the
+    training and test sets. This forces the model to generalize to entirely new
+    chemotypes at test time, giving a realistic estimate of performance on novel
+    compounds.
+
+    The algorithm sorts scaffold groups by size (largest first) and greedily
+    assigns them to the test set until the target fraction is reached. Because
+    entire scaffold groups move together, the achieved test fraction may deviate
+    from the target — this is expected and reported in the summary.
+
+    **Random split:**
+    Standard random partitioning. Train and test sets will share scaffolds,
+    making the task easier and performance estimates optimistic.
+
+    **Stratified random split:**
+    Like random, but preserves the class distribution of activity labels in
+    both sets. Useful for imbalanced classification tasks.
+
+    **Interpreting the PCA visualization:**
+    The chemical space plot projects molecular fingerprints into 2D using PCA.
+    In a scaffold split, train (blue) and test (orange) points tend to cluster
+    separately — the model must extrapolate to new chemical regions. In a random
+    split, they overlap — the model can interpolate, which is easier but less
+    realistic.
+
+    **References:**
+    - Bemis, G. W., & Murcko, M. A. (1996). The properties of known drugs.
+      1. Molecular frameworks. *J. Med. Chem.*, 39(15), 2887-2893.
+    - Wu, Z., et al. (2018). MoleculeNet: a benchmark for molecular machine
+      learning. *Chemical Science*, 9(2), 513-530.
+    """
+)
+
+st.header("Cluster Analysis")
+st.write(
+    """
+    The Cluster Analysis tab groups molecules by fingerprint similarity,
+    complementing the scaffold-based analysis in preprocessing. While
+    scaffolds group by core ring system, clustering captures overall
+    structural similarity including side chains and functional groups.
+
+    **Butina clustering (Taylor-Butina):**
+    A distance-based algorithm native to RDKit. You set a Tanimoto distance
+    cutoff (e.g., 0.4, meaning molecules need similarity >= 0.6 to cluster).
+    The algorithm finds the molecule with the most neighbors within the cutoff
+    (the centroid), assigns it and its neighbors to a cluster, then repeats.
+    The number of clusters emerges naturally from the data and cutoff.
+
+    - **Tight cutoff (e.g., 0.2):** many small, highly similar clusters
+    - **Loose cutoff (e.g., 0.7):** fewer, broader clusters
+    - Best for: exploring natural groupings, when you don't know how many
+      clusters to expect
+
+    **Hierarchical (agglomerative) clustering:**
+    Builds a hierarchy by iteratively merging the closest clusters using
+    average linkage on the Tanimoto distance matrix. You specify the number
+    of clusters, or let the tool auto-select it by maximizing the silhouette
+    score over a range of k values.
+
+    - **Silhouette score** ranges from -1 to 1. Higher values mean clusters
+      are well-separated and internally cohesive. Scores above 0.5 indicate
+      strong structure; below 0.25 may mean the data doesn't cluster cleanly.
+    - Best for: when you need a specific number of groups, or want a quality
+      metric for cluster assignments
+
+    **Representative (medoid) selection:**
+    For each cluster, the representative is the medoid — the molecule with
+    the lowest average Tanimoto distance to all other cluster members. This
+    is the most "central" molecule in the cluster, making it a good choice
+    for diverse subset selection.
+
+    **Diverse subset selection:**
+    Picking one representative per cluster gives a maximally diverse subset
+    of your dataset. This is useful for screening library design (maximize
+    chemical coverage with fewer compounds), selecting training sets, or
+    prioritizing compounds for experimental testing.
+
+    **Reference:**
+    - Butina, D. (1999). Unsupervised Database Clustering Based on Daylight's
+      Fingerprint and Tanimoto Similarity: A Fast and Automated Way to Cluster
+      Small and Large Data Sets. *J. Chem. Inf. Comput. Sci.*, 39(4), 747-750.
+    """
+)
+
 st.header("Descriptor glossary")
 st.write(
     """

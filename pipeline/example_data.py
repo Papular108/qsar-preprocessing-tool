@@ -86,3 +86,21 @@ def get_pains_demo_set():
     ]
     description = "PAINS-rich demo set (15 molecules) — 8 clean molecules + 7 known PAINS scaffolds (rhodanines, catechol, quinone, chalcone, anthraquinone, azo). Run with default settings to see PAINS filtering in action."
     return smiles, description
+
+
+def get_common_analgesics():
+    """
+    5 common analgesic/anti-inflammatory drugs for similarity screening demos.
+
+    Returns:
+        tuple: (list of "SMILES Name" strings, description string)
+    """
+    smiles = [
+        "CC(=O)Oc1ccccc1C(=O)O Aspirin",
+        "CC(C)Cc1ccc(cc1)C(C)C(=O)O Ibuprofen",
+        "CC(c1ccc2cccc(OC)c2c1)C(=O)O Naproxen",
+        "CC(=O)Nc1ccc(O)cc1 Acetaminophen",
+        "O=C(O)Cc1ccccc1Nc1c(Cl)cccc1Cl Diclofenac",
+    ]
+    description = "Common analgesics (5 molecules) — aspirin, ibuprofen, naproxen, acetaminophen, diclofenac."
+    return smiles, description

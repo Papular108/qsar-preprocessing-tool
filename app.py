@@ -15,12 +15,14 @@ from pipeline.preprocessing import (
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
     check_pains, check_brenk, compute_qed, analyze_scaffolds,
 )
-from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules, batch_similarity_search
+from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules, batch_similarity_search, multi_reference_similarity
+from pipeline.splitting import scaffold_split, random_split, compute_split_pca
+from pipeline.clustering import cluster_butina, cluster_hierarchical, compute_cluster_pca
 import altair as alt
 from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
 from pipeline.methodology import generate_methods_text
 from pipeline.pains_catalog import get_pains_explanation, get_brenk_explanation
-from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_dpp4_inhibitors
+from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_dpp4_inhibitors, get_common_analgesics
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
@@ -170,32 +172,51 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
-    /* ── Nav card buttons: scoped to nav_cards container only ── */
+    /* ── Category buttons (level 1) ── */
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_categories"])
+        [data-testid="stButton"] > button {
+        min-height: 56px !important;
+        font-size: 1.1rem !important;
+        font-weight: 700 !important;
+        border-radius: 10px !important;
+        border: 2px solid #e0e3e8 !important;
+        background: #f8f9fa !important;
+        color: #1a1a2e !important;
+        transition: all 0.15s ease !important;
+    }
+    [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_categories"])
+        [data-testid="stButton"] > button:hover {
+        background: #eef0f4 !important;
+        border-color: #ff4b4b !important;
+    }
+    .cat-active [data-testid="stButton"] > button {
+        background: white !important;
+        border-color: #ff4b4b !important;
+        border-bottom: 3px solid #ff4b4b !important;
+        color: #ff4b4b !important;
+    }
+    /* ── Tab buttons (level 2) ── */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_cards"])
         [data-testid="stButton"] > button {
-        min-height: 140px !important;
-        font-size: 1.5rem !important;
-        font-weight: 700 !important;
-        border-radius: 12px !important;
-        border: 2px solid #e0e3e8 !important;
+        min-height: 52px !important;
+        font-size: 0.95rem !important;
+        font-weight: 600 !important;
+        border-radius: 8px !important;
+        border: 1.5px solid #e0e3e8 !important;
         background: white !important;
         color: #1a1a2e !important;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.06) !important;
-        transition: all 0.2s ease !important;
-        white-space: pre-wrap !important;
-        line-height: 1.6 !important;
+        box-shadow: 0 1px 4px rgba(0,0,0,0.04) !important;
+        transition: all 0.15s ease !important;
     }
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_cards"])
         [data-testid="stButton"] > button:hover {
-        transform: translateY(-3px) !important;
-        box-shadow: 0 6px 20px rgba(0,0,0,0.12) !important;
+        box-shadow: 0 3px 10px rgba(0,0,0,0.1) !important;
         border-color: #ff4b4b !important;
     }
-    /* Active nav card */
     .nav-active [data-testid="stButton"] > button {
         background: #fafbff !important;
-        border-bottom: 4px solid #ff4b4b !important;
-        box-shadow: 0 4px 16px rgba(0,0,0,0.12) !important;
+        border-bottom: 3px solid #ff4b4b !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1) !important;
     }
     </style>""",
     unsafe_allow_html=True,
@@ -204,34 +225,89 @@ st.markdown(
 st.title("QSAR Preprocessing Tool")
 st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
-# ── Navigation cards ──
+# ── Two-level navigation: categories → tabs ──
+_NAV_STRUCTURE = {
+    "data": {
+        "label": "Data",
+        "icon": "📥",
+        "subtitle": "Load & prepare",
+        "tabs": [
+            ("preprocessing", "🧪", "Preprocessing", "Clean, filter & featurize"),
+            ("converter", "🔄", "Molecule Converter", "SMILES, InChI & more"),
+        ],
+    },
+    "analyze": {
+        "label": "Analyze",
+        "icon": "📊",
+        "subtitle": "Explore & compare",
+        "tabs": [
+            ("explorer", "🧬", "Molecule Explorer", "Analyze a single molecule"),
+            ("comparison", "⚖️", "Filter Comparison", "Compare settings side by side"),
+            ("screening", "🔍", "Similarity Screening", "Multi-reference virtual screening"),
+            ("clustering", "🔬", "Cluster Analysis", "Group molecules by similarity"),
+        ],
+    },
+    "model": {
+        "label": "Model",
+        "icon": "🧠",
+        "subtitle": "Split, train & predict",
+        "tabs": [
+            ("splitting", "✂️", "Train/Test Split", "Scaffold & random splitting"),
+        ],
+    },
+}
+
+# Reverse lookup: tab_key → category_key (built from structure, stays in sync)
+_TAB_TO_CATEGORY = {}
+for _cat_key, _cat_info in _NAV_STRUCTURE.items():
+    for (_tab_key, *_) in _cat_info["tabs"]:
+        _TAB_TO_CATEGORY[_tab_key] = _cat_key
+
+# Session state initialization (backwards-compatible: infer category from existing tab)
+if "active_category" not in st.session_state:
+    _existing_tab = st.session_state.get("active_tab", "preprocessing")
+    st.session_state["active_category"] = _TAB_TO_CATEGORY.get(_existing_tab, "data")
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "preprocessing"
 
-_NAV_CARDS = [
-    ("preprocessing", "🔬", "Preprocessing",     "Clean, filter & featurize"),
-    ("explorer",      "🧬", "Molecule Explorer",  "Analyze a single molecule"),
-    ("comparison",    "⚖️", "Filter Comparison",  "Compare settings side by side"),
-    ("converter",     "🔄", "Molecule Converter",  "SMILES, InChI & more"),
-]
+# Defensive: ensure active_tab belongs to active_category
+if _TAB_TO_CATEGORY.get(st.session_state["active_tab"]) != st.session_state["active_category"]:
+    st.session_state["active_tab"] = _NAV_STRUCTURE[st.session_state["active_category"]]["tabs"][0][0]
 
+# Level 1: Category row
+with st.container(key="nav_categories"):
+    _cat_cols = st.columns(3)
+    for _col, (_ck, _ci) in zip(_cat_cols, _NAV_STRUCTURE.items()):
+        _is_active_cat = st.session_state["active_category"] == _ck
+        with _col:
+            if _is_active_cat:
+                st.markdown('<div class="cat-active">', unsafe_allow_html=True)
+            if st.button(f"{_ci['icon']} {_ci['label']}", key=f"cat_{_ck}", use_container_width=True):
+                if not _is_active_cat:
+                    st.session_state["active_category"] = _ck
+                    st.session_state["active_tab"] = _ci["tabs"][0][0]
+                    st.rerun()  # needed: tab row must re-render for new category
+            st.caption(_ci["subtitle"])
+            if _is_active_cat:
+                st.markdown('</div>', unsafe_allow_html=True)
+
+# Level 2: Tab row (only active category's tabs)
+_active_tabs = _NAV_STRUCTURE[st.session_state["active_category"]]["tabs"]
 with st.container(key="nav_cards"):
-    nav_cols = st.columns(4)
-    for col, (key, icon, title, subtitle) in zip(nav_cols, _NAV_CARDS):
-        is_active = st.session_state["active_tab"] == key
-        with col:
-            if is_active:
+    # Pad single-tab categories so the button isn't full-width
+    _n_tab_cols = 3 if len(_active_tabs) == 1 else len(_active_tabs)
+    _tab_cols = st.columns(_n_tab_cols)
+    for _col, (_tk, _ti, _tt, _ts) in zip(_tab_cols, _active_tabs):
+        _is_active_tab = st.session_state["active_tab"] == _tk
+        with _col:
+            if _is_active_tab:
                 st.markdown('<div class="nav-active">', unsafe_allow_html=True)
-            if st.button(
-                f"{icon} {title}",
-                key=f"nav_{key}",
-                use_container_width=True,
-            ):
-                if not is_active:
-                    st.session_state["active_tab"] = key
-                    st.rerun()
-            st.caption(subtitle)
-            if is_active:
+            if st.button(f"{_ti} {_tt}", key=f"nav_{_tk}", use_container_width=True):
+                if not _is_active_tab:
+                    st.session_state["active_tab"] = _tk
+                    st.rerun()  # needed: content below must re-render for new tab
+            st.caption(_ts)
+            if _is_active_tab:
                 st.markdown('</div>', unsafe_allow_html=True)
 
 st.divider()
@@ -2421,3 +2497,848 @@ if st.session_state["active_tab"] == "converter":
                     file_name=f"molecule_conversions_{_conv_ts}.csv",
                     mime="text/csv", key="converter_batch_dl",
                 )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 5: Similarity Screening
+# ══════════════════════════════════════════════════════════════════════════════
+if st.session_state["active_tab"] == "screening":
+
+    st.header("Multi-Reference Similarity Screening")
+    st.write("Compare a set of reference molecules against a target dataset to find similar compounds using Tanimoto similarity.")
+
+    # ── Two-panel input ──
+    _scr_ref_col, _scr_tgt_col = st.columns(2)
+
+    with _scr_ref_col:
+        section_banner("Reference Molecules")
+        st.write("Enter reference molecules (one per line). Optionally add a name after the SMILES separated by a space.")
+
+        _SCR_REF_PRESETS = {
+            "Common analgesics": get_common_analgesics,
+            "DPP-4 inhibitors": get_dpp4_inhibitors,
+        }
+        _scr_ref_preset = st.selectbox("Load a preset", ["(none)"] + list(_SCR_REF_PRESETS.keys()),
+                                        key="scr_ref_preset")
+        if "scr_ref_text" not in st.session_state:
+            st.session_state["scr_ref_text"] = ""
+        if _scr_ref_preset != "(none)" and st.button("Load preset", key="scr_load_ref_preset"):
+            preset_data, _ = _SCR_REF_PRESETS[_scr_ref_preset]()
+            st.session_state["scr_ref_text"] = "\n".join(preset_data)
+            st.rerun()
+
+        _scr_ref_input = st.text_area("Reference SMILES", value=st.session_state["scr_ref_text"],
+                                       height=180, key="scr_ref_area",
+                                       placeholder="CC(=O)Oc1ccccc1C(=O)O Aspirin\nCC(C)Cc1ccc(cc1)C(C)C(=O)O Ibuprofen")
+        st.session_state["scr_ref_text"] = _scr_ref_input
+
+    with _scr_tgt_col:
+        section_banner("Target Dataset")
+        st.write("Upload a file or paste SMILES. This is the library you want to screen against.")
+
+        _scr_tgt_source = st.radio("Target source", ["Use preprocessed results", "Upload file", "Paste SMILES"],
+                                    key="scr_tgt_source", horizontal=True)
+
+        _scr_tgt_smiles_list = []
+        if _scr_tgt_source == "Use preprocessed results":
+            if "kept_mols_for_featurization" in st.session_state and st.session_state["kept_mols_for_featurization"]:
+                _scr_tgt_smiles_list = [Chem.MolToSmiles(m) for m in st.session_state["kept_mols_for_featurization"]]
+                st.success(f"{len(_scr_tgt_smiles_list)} molecules from preprocessing pipeline")
+            else:
+                st.info("No preprocessed molecules available. Run the Preprocessing tab first, or upload/paste targets.")
+        elif _scr_tgt_source == "Upload file":
+            _scr_tgt_file = st.file_uploader("Upload target file", type=["txt", "csv", "xlsx"], key="scr_tgt_file")
+            if _scr_tgt_file is not None:
+                _scr_fname = _scr_tgt_file.name
+                if _scr_fname.endswith(".csv") or _scr_fname.endswith(".xlsx"):
+                    _scr_df = pd.read_csv(_scr_tgt_file) if _scr_fname.endswith(".csv") else pd.read_excel(_scr_tgt_file)
+                    _scr_col = None
+                    for c in ["canonical_smiles", "SMILES", "Smiles", "smiles"]:
+                        if c in _scr_df.columns:
+                            _scr_col = c
+                            break
+                    if _scr_col is None:
+                        _scr_col = st.selectbox("Select SMILES column", _scr_df.columns.tolist(), key="scr_tgt_col")
+                    _scr_tgt_smiles_list = _scr_df[_scr_col].dropna().astype(str).tolist()
+                else:
+                    _scr_content = _scr_tgt_file.read().decode("utf-8")
+                    _scr_tgt_smiles_list = [l.strip() for l in _scr_content.splitlines() if l.strip()]
+                st.success(f"{len(_scr_tgt_smiles_list)} target molecules loaded")
+        else:
+            _scr_tgt_pasted = st.text_area("Paste target SMILES (one per line)", height=150, key="scr_tgt_paste")
+            if _scr_tgt_pasted.strip():
+                _scr_tgt_smiles_list = [l.strip() for l in _scr_tgt_pasted.splitlines() if l.strip()]
+
+        # Example target dataset
+        if not _scr_tgt_smiles_list:
+            if st.button("Load FDA-approved drugs as targets", key="scr_load_fda"):
+                _fda_smiles, _ = get_fda_approved_drugs()
+                st.session_state["_scr_fda_loaded"] = _fda_smiles
+                st.rerun()
+            if "_scr_fda_loaded" in st.session_state:
+                _scr_tgt_smiles_list = st.session_state["_scr_fda_loaded"]
+                st.success(f"{len(_scr_tgt_smiles_list)} FDA-approved drugs loaded as targets")
+
+    # ── Settings ──
+    with st.expander("Screening settings", expanded=False):
+        _scr_s1, _scr_s2, _scr_s3, _scr_s4 = st.columns(4)
+        with _scr_s1:
+            _scr_fp_type = st.selectbox("Fingerprint", ["morgan", "fcfp", "maccs", "topological",
+                                        "atom_pair", "torsion", "avalon"], key="scr_fp_type")
+        with _scr_s2:
+            _scr_radius = st.number_input("Radius", min_value=1, max_value=4, value=2, key="scr_radius")
+        with _scr_s3:
+            _scr_nbits = st.selectbox("Bits", [512, 1024, 2048], index=2, key="scr_nbits")
+        with _scr_s4:
+            _scr_threshold = st.slider("Min. similarity", 0.0, 1.0, 0.4, 0.05, key="scr_threshold")
+        _scr_topn = st.number_input("Max hits per reference", min_value=1, max_value=100, value=10, key="scr_topn")
+
+    # ── Run screening ──
+    if st.button("Run Similarity Screening", type="primary", key="scr_run"):
+        # Parse reference molecules
+        _scr_ref_lines = [l.strip() for l in _scr_ref_input.splitlines() if l.strip()]
+        if not _scr_ref_lines:
+            st.error("Please enter at least one reference molecule.")
+        elif not _scr_tgt_smiles_list:
+            st.error("Please provide a target dataset.")
+        else:
+            _scr_ref_mols = []
+            _scr_ref_errors = []
+            for line in _scr_ref_lines:
+                parts = line.split(None, 1)
+                smi = parts[0]
+                name = parts[1] if len(parts) > 1 else smi
+                mol = Chem.MolFromSmiles(smi)
+                if mol is None:
+                    _scr_ref_errors.append(name)
+                else:
+                    _scr_ref_mols.append((name, mol))
+
+            if _scr_ref_errors:
+                st.warning(f"Could not parse {len(_scr_ref_errors)} reference molecule(s): {', '.join(_scr_ref_errors)}")
+
+            # Parse target molecules
+            _scr_tgt_mols = []
+            _scr_tgt_valid_smiles = []
+            _scr_tgt_fail = 0
+            for smi in _scr_tgt_smiles_list:
+                s = smi.split()[0] if smi.split() else smi
+                mol = Chem.MolFromSmiles(s)
+                if mol is not None:
+                    _scr_tgt_mols.append(mol)
+                    _scr_tgt_valid_smiles.append(Chem.MolToSmiles(mol))
+                else:
+                    _scr_tgt_fail += 1
+
+            if _scr_tgt_fail > 0:
+                st.warning(f"{_scr_tgt_fail} target molecule(s) failed to parse and were skipped.")
+
+            if _scr_ref_mols and _scr_tgt_mols:
+                with st.spinner("Computing fingerprints and similarities..."):
+                    _scr_results = multi_reference_similarity(
+                        ref_mols=_scr_ref_mols,
+                        target_mols=_scr_tgt_mols,
+                        target_smiles=_scr_tgt_valid_smiles,
+                        top_n=_scr_topn,
+                        threshold=_scr_threshold,
+                        fp_type=_scr_fp_type,
+                        radius=_scr_radius,
+                        n_bits=_scr_nbits,
+                    )
+
+                st.session_state["scr_results"] = _scr_results
+                st.session_state["scr_ref_mols_display"] = _scr_ref_mols
+
+    # ── Display results ──
+    if "scr_results" in st.session_state:
+        _scr_res = st.session_state["scr_results"]
+        _scr_stats = _scr_res["stats"]
+
+        section_banner("Screening Results")
+        _stat1, _stat2, _stat3 = st.columns(3)
+        with _stat1:
+            st.metric("Total targets", _scr_stats["total_targets"])
+        with _stat2:
+            st.metric("Hits above threshold", _scr_stats["targets_above_threshold"])
+        with _stat3:
+            st.metric("Avg. best similarity", f"{_scr_stats['avg_similarity']:.3f}")
+
+        # Per-reference results
+        section_banner("Hits per Reference")
+        for ref_data in _scr_res["per_reference"]:
+            ref_name = ref_data["ref_name"]
+            hits = ref_data["hits"]
+            with st.expander(f"{ref_name} — {len(hits)} hit(s)", expanded=len(hits) > 0):
+                if ref_data["ref_smiles"]:
+                    ref_mol = Chem.MolFromSmiles(ref_data["ref_smiles"])
+                    if ref_mol:
+                        st.image(mol_to_image(ref_mol, size=(200, 200)), caption=f"Reference: {ref_name}", width=200)
+                if hits:
+                    hit_rows = []
+                    for h in hits:
+                        hit_rows.append({
+                            "Target SMILES": h["target_smiles"],
+                            "Similarity": h["similarity"],
+                        })
+                    st.dataframe(pd.DataFrame(hit_rows), use_container_width=True, hide_index=True)
+
+                    # Show top 3 hit structures
+                    _hit_cols = st.columns(min(3, len(hits)))
+                    for ci, h in enumerate(hits[:3]):
+                        hmol = Chem.MolFromSmiles(h["target_smiles"])
+                        if hmol:
+                            with _hit_cols[ci]:
+                                st.image(mol_to_image(hmol, size=(180, 180)),
+                                         caption=f"Sim: {h['similarity']:.3f}", width=180)
+                else:
+                    st.write("No hits above the similarity threshold.")
+
+        # Heatmap
+        _sim_matrix = _scr_res["similarity_matrix"]
+        if not _sim_matrix.empty and len(_sim_matrix.columns) <= 50:
+            section_banner("Similarity Heatmap")
+            import plotly.graph_objects as go
+            # Truncate column labels for readability
+            col_labels = [s[:20] + "..." if len(s) > 20 else s for s in _sim_matrix.columns.tolist()]
+            _hm_fig = go.Figure(data=go.Heatmap(
+                z=_sim_matrix.values,
+                x=col_labels,
+                y=_sim_matrix.index.tolist(),
+                colorscale="RdYlGn",
+                zmin=0, zmax=1,
+                colorbar=dict(title="Tanimoto"),
+                hovertemplate="Reference: %{y}<br>Target: %{x}<br>Similarity: %{z:.3f}<extra></extra>",
+            ))
+            _hm_fig.update_layout(
+                width=min(900, 200 + len(col_labels) * 60),
+                height=200 + len(_sim_matrix) * 40,
+                margin=dict(l=120, r=30, t=30, b=120),
+                xaxis=dict(tickangle=45, tickfont=dict(size=9)),
+                yaxis=dict(tickfont=dict(size=11)),
+            )
+            st.plotly_chart(_hm_fig, use_container_width=True)
+        elif not _sim_matrix.empty:
+            st.info("Heatmap is available for up to 50 target hits. Use a higher similarity threshold to reduce the number of hits.")
+
+        # All hits table + download
+        _all_hits = _scr_res["all_hits"]
+        if len(_all_hits) > 0:
+            section_banner("All Hits (Deduplicated)")
+            st.write(f"**{len(_all_hits)}** unique target molecules matched at least one reference above the threshold.")
+            st.dataframe(_all_hits, use_container_width=True, hide_index=True)
+
+            _scr_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            st.download_button(
+                "Download all hits as CSV",
+                data=_all_hits.to_csv(index=False),
+                file_name=f"similarity_screening_hits_{_scr_ts}.csv",
+                mime="text/csv",
+                key="scr_dl_hits",
+            )
+
+        # Educational caption
+        st.caption(
+            "**How to interpret:** Tanimoto similarity measures fingerprint overlap (0 = no shared features, "
+            "1 = identical). Scores > 0.85 indicate near-duplicates; 0.7-0.85 close analogs; 0.4-0.7 moderate "
+            "similarity. The fingerprint type affects scores — Morgan (ECFP) gives lower values than MACCS for "
+            "the same pair because it captures finer structural detail."
+        )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 6: Train/Test Split
+# ══════════════════════════════════════════════════════════════════════════════
+if st.session_state["active_tab"] == "splitting":
+
+    st.header("Train/Test Split")
+    st.write("Generate realistic train/test splits for downstream QSAR modeling. "
+             "Scaffold splitting ensures no Murcko scaffold appears in both sets, "
+             "forcing the model to generalize to unseen chemotypes.")
+
+    # ── Staleness check ──
+    def _split_data_hash(smiles_list):
+        if not smiles_list:
+            return None
+        return (smiles_list[0], smiles_list[-1], len(smiles_list))
+
+    # ── Check for preprocessed data ──
+    _spl_mols = st.session_state.get("kept_mols_for_featurization", [])
+    if not _spl_mols:
+        st.info("No preprocessed molecules available. Run the **Preprocessing** tab first to generate a dataset, "
+                "or use the example data loader below.")
+        if st.button("Load FDA-approved drugs (20 molecules)", key="spl_load_fda"):
+            _fda_smi, _ = get_fda_approved_drugs()
+            _fda_mols = [Chem.MolFromSmiles(s) for s in _fda_smi]
+            _fda_mols = [m for m in _fda_mols if m is not None]
+            st.session_state["kept_mols_for_featurization"] = _fda_mols
+            st.rerun()
+        st.stop()
+
+    _spl_smiles = [Chem.MolToSmiles(m) for m in _spl_mols]
+    _spl_current_hash = _split_data_hash(_spl_smiles)
+
+    # Staleness: clear old results if the dataset changed
+    if "split_data_hash" in st.session_state and st.session_state["split_data_hash"] != _spl_current_hash:
+        for k in ["split_results", "split_pca_current", "split_pca_random", "split_method"]:
+            st.session_state.pop(k, None)
+        st.warning("The preprocessed dataset has changed since the last split. Please re-run the split.")
+    st.session_state["split_data_hash"] = _spl_current_hash
+
+    st.write(f"**{len(_spl_mols)}** molecules available from preprocessing.")
+
+    # ── Settings ──
+    _spl_c1, _spl_c2, _spl_c3, _spl_c4 = st.columns(4)
+    with _spl_c1:
+        _spl_method = st.radio("Split method", ["Scaffold", "Random", "Stratified random"],
+                                key="spl_method_radio", horizontal=False)
+    with _spl_c2:
+        _spl_test_size = st.slider("Test fraction", 0.1, 0.5, 0.2, 0.05, key="spl_test_size")
+    with _spl_c3:
+        _spl_seed = st.number_input("Random seed", min_value=0, max_value=99999, value=42, key="spl_seed")
+    with _spl_c4:
+        _spl_labels = None
+        _spl_label_col = None
+        if _spl_method == "Stratified random":
+            # Check for activity labels in session state
+            _spl_available_labels = {}
+            if "activity_labels" in st.session_state:
+                _spl_available_labels["Activity (from preprocessing)"] = st.session_state["activity_labels"]
+            if _spl_available_labels:
+                _spl_label_col = st.selectbox("Label column", list(_spl_available_labels.keys()), key="spl_label_col")
+                _spl_labels = _spl_available_labels[_spl_label_col]
+            else:
+                st.warning("No activity labels found. Run preprocessing with activity labeling, or use a different split method.")
+
+    # ── Run split ──
+    if st.button("Run Split", type="primary", key="spl_run"):
+        if _spl_method == "Stratified random" and _spl_labels is None:
+            st.error("Stratified split requires activity labels. Please select a label column or use a different method.")
+        else:
+            with st.spinner("Computing split..."):
+                if _spl_method == "Scaffold":
+                    _spl_result = scaffold_split(_spl_mols, _spl_smiles,
+                                                  test_size=_spl_test_size, random_state=_spl_seed)
+                elif _spl_method == "Random":
+                    _spl_result = random_split(_spl_mols, _spl_smiles,
+                                               test_size=_spl_test_size, random_state=_spl_seed)
+                else:
+                    _spl_result = random_split(_spl_mols, _spl_smiles,
+                                               test_size=_spl_test_size, random_state=_spl_seed,
+                                               labels=_spl_labels, stratify=True)
+
+                st.session_state["split_results"] = _spl_result
+                st.session_state["split_method"] = _spl_method
+
+                # Compute PCA for current split
+                if _spl_result["test_indices"]:
+                    _spl_pca = compute_split_pca(_spl_mols, _spl_result["train_indices"],
+                                                  _spl_result["test_indices"])
+                    st.session_state["split_pca_current"] = _spl_pca
+
+                    # Also compute random baseline PCA for comparison (if not already random)
+                    if _spl_method != "Random":
+                        _spl_rand = random_split(_spl_mols, _spl_smiles,
+                                                  test_size=_spl_test_size, random_state=_spl_seed)
+                        _spl_pca_rand = compute_split_pca(_spl_mols, _spl_rand["train_indices"],
+                                                           _spl_rand["test_indices"])
+                        st.session_state["split_pca_random"] = _spl_pca_rand
+                    else:
+                        st.session_state.pop("split_pca_random", None)
+                else:
+                    st.session_state.pop("split_pca_current", None)
+                    st.session_state.pop("split_pca_random", None)
+
+            st.rerun()
+
+    # ── Display results ──
+    if "split_results" in st.session_state:
+        _spl_res = st.session_state["split_results"]
+        _spl_meth = st.session_state.get("split_method", "")
+
+        # Fallback warning
+        if _spl_res.get("fallback") == "single_scaffold":
+            st.error("All molecules share the same Murcko scaffold — scaffold splitting is not possible. "
+                     "All molecules were placed in the training set. Consider using a random split instead.")
+        elif _spl_res.get("fallback") == "too_small":
+            st.warning("Dataset too small to split (< 2 molecules). All molecules placed in training set.")
+
+        # Summary table
+        section_banner("Split Summary")
+        _n_train = len(_spl_res["train_indices"])
+        _n_test = len(_spl_res["test_indices"])
+        _n_total = _n_train + _n_test
+        _achieved = _spl_res["achieved_test_fraction"]
+        _deviation = abs(_achieved - _spl_test_size) * 100
+
+        _summary_rows = [
+            ("Method", _spl_meth),
+            ("Total molecules", str(_n_total)),
+            ("Train set", f"{_n_train} ({_n_train/_n_total*100:.1f}%)" if _n_total > 0 else "0"),
+            ("Test set", f"{_n_test} ({_n_test/_n_total*100:.1f}%)" if _n_total > 0 else "0"),
+            ("Target test fraction", f"{_spl_test_size:.0%}"),
+            ("Achieved test fraction", f"{_achieved:.1%}"),
+        ]
+        if _spl_meth == "Scaffold":
+            _summary_rows.append(("Scaffolds", str(_spl_res.get("n_scaffolds", "-"))))
+            _summary_rows.append(("Singleton scaffolds", str(_spl_res.get("n_singletons", "-"))))
+
+        compact_table(_summary_rows)
+
+        if _deviation > 10:
+            st.warning(f"The achieved test fraction ({_achieved:.1%}) deviates from the target "
+                       f"({_spl_test_size:.0%}) by {_deviation:.1f} percentage points. This typically happens "
+                       f"when one or more scaffold groups are large relative to the dataset. "
+                       f"Consider adjusting the test fraction or using a random split.")
+
+        # Scaffold distribution (scaffold split only)
+        if _spl_meth == "Scaffold" and "scaffold_counts" in _spl_res:
+            section_banner("Scaffold Distribution")
+            import plotly.graph_objects as go
+
+            _sc_df = _spl_res["scaffold_counts"]
+            _sc_top = _sc_df.head(20).copy()
+            _sc_other_count = _sc_df.iloc[20:]["Count"].sum() if len(_sc_df) > 20 else 0
+
+            _sc_labels = []
+            for i, row in _sc_top.iterrows():
+                scaf = row["Scaffold"]
+                if scaf == "":
+                    _sc_labels.append("(acyclic)")
+                elif len(scaf) > 25:
+                    _sc_labels.append(scaf[:22] + "...")
+                else:
+                    _sc_labels.append(scaf)
+
+            _sc_counts = _sc_top["Count"].tolist()
+            if _sc_other_count > 0:
+                _sc_labels.append(f"Other ({len(_sc_df) - 20})")
+                _sc_counts.append(_sc_other_count)
+
+            _sc_fig = go.Figure(go.Bar(
+                y=_sc_labels[::-1],
+                x=_sc_counts[::-1],
+                orientation="h",
+                marker_color="#1f77b4",
+            ))
+            _sc_fig.update_layout(
+                height=max(300, len(_sc_labels) * 25 + 80),
+                margin=dict(l=180, r=20, t=30, b=40),
+                xaxis_title="Number of molecules",
+                yaxis=dict(tickfont=dict(size=10)),
+                paper_bgcolor="white", plot_bgcolor="white",
+            )
+            st.plotly_chart(_sc_fig, use_container_width=True)
+            st.caption("Datasets dominated by a few large scaffolds produce more challenging scaffold splits, "
+                       "because entire clusters of similar molecules move together. Many singleton scaffolds "
+                       "(scaffolds with only one molecule) make the split behave more like a random split.")
+
+        # Chemical space PCA
+        if "split_pca_current" in st.session_state:
+            section_banner("Chemical Space (PCA)")
+            import plotly.graph_objects as go
+
+            _pca_cur = st.session_state["split_pca_current"]
+            _has_random_comparison = "split_pca_random" in st.session_state
+
+            if _has_random_comparison:
+                _pca_col1, _pca_col2 = st.columns(2)
+            else:
+                _pca_col1 = st.container()
+                _pca_col2 = None
+
+            def _pca_scatter(pca_data, title):
+                df = pca_data["pca_df"]
+                vr = pca_data["var_ratio"]
+                fig = go.Figure()
+                for split_val, color in [("Train", "#1f77b4"), ("Test", "#ff7f0e")]:
+                    subset = df[df["Split"] == split_val]
+                    fig.add_trace(go.Scatter(
+                        x=subset["PC1"], y=subset["PC2"],
+                        mode="markers",
+                        marker=dict(size=8, color=color, opacity=0.75),
+                        name=split_val,
+                        text=subset["SMILES"],
+                        hovertemplate="<b>%{text}</b><br>PC1=%{x:.2f}<br>PC2=%{y:.2f}<extra></extra>",
+                    ))
+                fig.update_layout(
+                    title=dict(text=title, font=dict(size=13)),
+                    xaxis_title=f"PC1 ({vr[0]*100:.1f}% var.)",
+                    yaxis_title=f"PC2 ({vr[1]*100:.1f}% var.)",
+                    width=450, height=400,
+                    margin=dict(l=50, r=20, t=40, b=50),
+                    paper_bgcolor="white", plot_bgcolor="white",
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"),
+                    xaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                    yaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                )
+                return fig
+
+            with _pca_col1:
+                st.plotly_chart(_pca_scatter(_pca_cur, f"{_spl_meth} Split"),
+                               use_container_width=True)
+
+            if _has_random_comparison and _pca_col2 is not None:
+                _pca_rand = st.session_state["split_pca_random"]
+                with _pca_col2:
+                    st.plotly_chart(_pca_scatter(_pca_rand, "Random Split (baseline)"),
+                                   use_container_width=True)
+
+            st.caption("Each point is a molecule projected into 2D chemical space via PCA on Morgan fingerprints. "
+                       "In a scaffold split, train (blue) and test (orange) points tend to occupy different regions, "
+                       "meaning the model must extrapolate to new chemical space. In a random split, train and test "
+                       "are interleaved — easier for the model but less realistic.")
+
+        # Split details + download
+        section_banner("Split Details")
+        _dl_col1, _dl_col2 = st.columns(2)
+
+        with _dl_col1:
+            with st.expander(f"Train set ({_n_train} molecules)", expanded=False):
+                st.dataframe(_spl_res["train_df"], use_container_width=True, hide_index=True, height=300)
+
+        with _dl_col2:
+            with st.expander(f"Test set ({_n_test} molecules)", expanded=False):
+                if _n_test > 0:
+                    st.dataframe(_spl_res["test_df"], use_container_width=True, hide_index=True, height=300)
+                else:
+                    st.write("No test molecules (see warning above).")
+
+        # Download buttons
+        _spl_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _dl_b1, _dl_b2, _dl_b3 = st.columns(3)
+        with _dl_b1:
+            st.download_button(
+                "Download train set CSV",
+                data=_spl_res["train_df"].to_csv(index=False),
+                file_name=f"train_split_{_spl_ts}.csv",
+                mime="text/csv", key="spl_dl_train",
+            )
+        with _dl_b2:
+            if _n_test > 0:
+                st.download_button(
+                    "Download test set CSV",
+                    data=_spl_res["test_df"].to_csv(index=False),
+                    file_name=f"test_split_{_spl_ts}.csv",
+                    mime="text/csv", key="spl_dl_test",
+                )
+        with _dl_b3:
+            _combined = pd.concat([_spl_res["train_df"], _spl_res["test_df"]], ignore_index=True)
+            st.download_button(
+                "Download combined CSV",
+                data=_combined.to_csv(index=False),
+                file_name=f"split_combined_{_spl_ts}.csv",
+                mime="text/csv", key="spl_dl_combined",
+            )
+
+        st.caption(
+            "**Why scaffold split?** Random splits allow train and test sets to share the same molecular "
+            "scaffolds, inflating apparent model performance. Scaffold splits force generalization to "
+            "new chemotypes, giving a more realistic estimate of how the model will perform on truly "
+            "novel compounds. This is the recommended splitting strategy for QSAR benchmarking "
+            "(Wu et al., MoleculeNet, 2018)."
+        )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TAB 7: Cluster Analysis
+# ══════════════════════════════════════════════════════════════════════════════
+if st.session_state["active_tab"] == "clustering":
+
+    st.header("Cluster Analysis")
+    st.write("Group molecules by fingerprint similarity to understand dataset structure, "
+             "identify overrepresented chemical series, and select diverse subsets.")
+
+    # ── Staleness check ──
+    def _clust_data_hash(smiles_list):
+        if not smiles_list:
+            return None
+        return (smiles_list[0], smiles_list[-1], len(smiles_list))
+
+    # ── Check for preprocessed data ──
+    _cl_mols = st.session_state.get("kept_mols_for_featurization", [])
+    if not _cl_mols:
+        st.info("No preprocessed molecules available. Run the **Preprocessing** tab first, "
+                "or use the example data loader below.")
+        if st.button("Load FDA-approved drugs (20 molecules)", key="cl_load_fda"):
+            _fda_smi, _ = get_fda_approved_drugs()
+            _fda_mols = [Chem.MolFromSmiles(s) for s in _fda_smi]
+            _fda_mols = [m for m in _fda_mols if m is not None]
+            st.session_state["kept_mols_for_featurization"] = _fda_mols
+            st.rerun()
+        st.stop()
+
+    _cl_smiles = [Chem.MolToSmiles(m) for m in _cl_mols]
+    _cl_current_hash = _clust_data_hash(_cl_smiles)
+
+    # Staleness: clear old results if the dataset changed
+    if "cluster_data_hash" in st.session_state and st.session_state["cluster_data_hash"] != _cl_current_hash:
+        for k in ["cluster_results", "cluster_method", "cluster_pca"]:
+            st.session_state.pop(k, None)
+        st.warning("The preprocessed dataset has changed since the last clustering. Please re-run.")
+    st.session_state["cluster_data_hash"] = _cl_current_hash
+
+    st.write(f"**{len(_cl_mols)}** molecules available from preprocessing.")
+
+    # ── Settings ──
+    _cl_c1, _cl_c2, _cl_c3, _cl_c4 = st.columns(4)
+    with _cl_c1:
+        _cl_method = st.radio("Clustering method", ["Butina", "Hierarchical"],
+                               key="cl_method_radio")
+    with _cl_c2:
+        _cl_fp_type = st.selectbox("Fingerprint", ["morgan", "fcfp", "maccs", "topological",
+                                    "atom_pair", "torsion", "avalon"], key="cl_fp_type")
+    with _cl_c3:
+        _cl_radius = st.number_input("Radius", min_value=1, max_value=4, value=2, key="cl_radius")
+    with _cl_c4:
+        _cl_nbits = st.selectbox("Bits", [512, 1024, 2048], index=2, key="cl_nbits")
+
+    if _cl_method == "Butina":
+        _cl_cutoff = st.slider("Distance cutoff", 0.1, 0.9, 0.4, 0.05, key="cl_cutoff",
+                                help="Lower cutoff = tighter clusters (higher similarity required). "
+                                     "A cutoff of 0.4 means molecules need Tanimoto similarity >= 0.6 to cluster together.")
+    else:
+        _cl_auto = st.checkbox("Auto-select number of clusters (silhouette score)", value=True, key="cl_auto_k")
+        _cl_n_clusters = None
+        if not _cl_auto:
+            _cl_n_clusters = st.number_input("Number of clusters", min_value=2,
+                                              max_value=min(50, len(_cl_mols)),
+                                              value=min(5, len(_cl_mols)), key="cl_n_clusters")
+
+    # Size warning
+    if len(_cl_mols) > 5000:
+        st.warning(f"Large dataset ({len(_cl_mols)} molecules) — distance matrix computation may take a minute. "
+                   f"Consider using a higher cutoff or subsampling for faster results.")
+
+    # ── Run clustering ──
+    if st.button("Run Clustering", type="primary", key="cl_run"):
+        with st.spinner("Computing distance matrix and clustering..."):
+            if _cl_method == "Butina":
+                _cl_result = cluster_butina(
+                    _cl_mols, _cl_smiles,
+                    fp_type=_cl_fp_type, radius=_cl_radius, n_bits=_cl_nbits,
+                    cutoff=_cl_cutoff,
+                )
+            else:
+                _cl_result = cluster_hierarchical(
+                    _cl_mols, _cl_smiles,
+                    fp_type=_cl_fp_type, radius=_cl_radius, n_bits=_cl_nbits,
+                    n_clusters=_cl_n_clusters if not _cl_auto else None,
+                )
+
+            # Store only serializable data — no fingerprint objects
+            st.session_state["cluster_results"] = {
+                "assignments": _cl_result["assignments"],
+                "cluster_sizes": _cl_result["cluster_sizes"],
+                "representatives": _cl_result["representatives"],
+                "n_clusters": _cl_result["n_clusters"],
+                "n_singletons": _cl_result["n_singletons"],
+                "silhouette_score": _cl_result.get("silhouette_score"),
+                "method": _cl_result["method"],
+                "params": _cl_result["params"],
+            }
+            st.session_state["cluster_method"] = _cl_method
+
+            # Compute PCA
+            _cl_ids = _cl_result["assignments"]["Cluster_ID"].tolist()
+            if len(_cl_mols) >= 3:
+                _cl_pca = compute_cluster_pca(_cl_mols, _cl_ids,
+                                               fp_type=_cl_fp_type, radius=_cl_radius, n_bits=1024)
+                st.session_state["cluster_pca"] = _cl_pca
+            else:
+                st.session_state.pop("cluster_pca", None)
+
+        st.rerun()
+
+    # ── Display results ──
+    if "cluster_results" in st.session_state:
+        _cl_res = st.session_state["cluster_results"]
+
+        # ── Cluster Summary ──
+        section_banner("Cluster Summary")
+        _cl_n = len(_cl_res["assignments"])
+        _cl_nc = _cl_res["n_clusters"]
+        _cl_largest = int(_cl_res["cluster_sizes"]["Size"].iloc[0]) if _cl_nc > 0 else 0
+        _cl_sil = _cl_res.get("silhouette_score")
+
+        _cl_summary_rows = [
+            ("Method", st.session_state.get("cluster_method", "")),
+            ("Total molecules", str(_cl_n)),
+            ("Number of clusters", str(_cl_nc)),
+            ("Largest cluster", str(_cl_largest)),
+            ("Singleton clusters", str(_cl_res["n_singletons"])),
+        ]
+        if _cl_sil is not None:
+            _cl_summary_rows.append(("Silhouette score", f"{_cl_sil:.3f}"))
+        if "params" in _cl_res:
+            _p = _cl_res["params"]
+            _cl_summary_rows.append(("Fingerprint", f"{_p.get('fp_type', '')} (r={_p.get('radius', '')}, {_p.get('n_bits', '')} bits)"))
+            if "cutoff" in _p:
+                _cl_summary_rows.append(("Distance cutoff", f"{_p['cutoff']} (similarity >= {1 - _p['cutoff']:.1f})"))
+
+        compact_table(_cl_summary_rows)
+
+        # Warnings for degenerate cases
+        if _cl_nc == _cl_n and _cl_nc > 1:
+            st.warning("Every molecule is its own cluster (all singletons). Try increasing the distance cutoff "
+                       "to allow more molecules to group together.")
+        elif _cl_nc == 1 and _cl_n > 1:
+            st.warning("All molecules fall into a single cluster. Try decreasing the distance cutoff "
+                       "for finer grouping, or use hierarchical clustering with more clusters.")
+
+        # ── Cluster Size Distribution ──
+        if _cl_nc > 1:
+            section_banner("Cluster Size Distribution")
+            import plotly.graph_objects as go
+
+            _cs_df = _cl_res["cluster_sizes"]
+            _cs_labels = [f"Cluster {row['Cluster_ID']}" for _, row in _cs_df.iterrows()]
+            _cs_sizes = _cs_df["Size"].tolist()
+
+            _cs_fig = go.Figure(go.Bar(
+                x=_cs_labels, y=_cs_sizes,
+                marker_color="#1f77b4",
+                text=_cs_sizes, textposition="outside",
+            ))
+            _cs_fig.update_layout(
+                height=350,
+                margin=dict(l=50, r=20, t=30, b=60),
+                xaxis=dict(title="Cluster", tickangle=45 if _cl_nc > 10 else 0,
+                           tickfont=dict(size=10 if _cl_nc > 15 else 12)),
+                yaxis_title="Number of molecules",
+                paper_bgcolor="white", plot_bgcolor="white",
+            )
+            st.plotly_chart(_cs_fig, use_container_width=True)
+            st.caption("A skewed distribution (one or two dominant clusters) indicates the dataset is "
+                       "dominated by a few chemical series. A uniform distribution suggests higher "
+                       "chemical diversity. Many singletons may indicate the cutoff is too tight or "
+                       "the dataset is structurally diverse.")
+
+        # ── Cluster Representatives ──
+        section_banner("Cluster Representatives")
+        _cl_reps = _cl_res["representatives"]
+
+        # Show top 5 with structure images
+        _n_show = min(5, len(_cl_reps))
+        for _ri in range(_n_show):
+            _rrow = _cl_reps.iloc[_ri]
+            _rcid = _rrow["Cluster_ID"]
+            _rsize = _rrow["Size"]
+            _rsmi = _rrow["SMILES"]
+            with st.expander(f"Cluster {_rcid} — {_rsize} molecule(s)", expanded=(_ri < 3)):
+                _r_col1, _r_col2 = st.columns([1, 3])
+                with _r_col1:
+                    _rmol = Chem.MolFromSmiles(_rsmi)
+                    if _rmol:
+                        st.image(mol_to_image(_rmol, size=(200, 200)),
+                                 caption="Representative", width=200)
+                with _r_col2:
+                    st.code(_rsmi, language=None)
+                    # Show other members of this cluster
+                    _cmembers = _cl_res["assignments"][
+                        _cl_res["assignments"]["Cluster_ID"] == _rcid
+                    ]["SMILES"].tolist()
+                    if len(_cmembers) > 1:
+                        _others = [s for s in _cmembers if s != _rsmi]
+                        st.write(f"Other members ({len(_others)}):")
+                        st.dataframe(pd.DataFrame({"SMILES": _others}),
+                                     use_container_width=True, hide_index=True, height=150)
+
+        if len(_cl_reps) > _n_show:
+            with st.expander(f"View all {len(_cl_reps)} cluster representatives"):
+                st.dataframe(_cl_reps, use_container_width=True, hide_index=True)
+
+        # ── Chemical Space PCA ──
+        if "cluster_pca" in st.session_state:
+            section_banner("Chemical Space (PCA)")
+            import plotly.graph_objects as go
+            import plotly.express as px
+
+            _cpca = st.session_state["cluster_pca"]
+            _cpca_df = _cpca["pca_df"]
+            _cvr = _cpca["var_ratio"]
+            _n_unique_clusters = _cpca_df["Cluster_ID"].nunique()
+
+            _cfig = go.Figure()
+
+            if _n_unique_clusters <= 10:
+                _ccolors = px.colors.qualitative.Plotly
+                for ci, cid in enumerate(sorted(_cpca_df["Cluster_ID"].unique())):
+                    _csub = _cpca_df[_cpca_df["Cluster_ID"] == cid]
+                    _cfig.add_trace(go.Scatter(
+                        x=_csub["PC1"], y=_csub["PC2"],
+                        mode="markers",
+                        marker=dict(size=8, color=_ccolors[ci % len(_ccolors)], opacity=0.8),
+                        name=f"Cluster {cid}",
+                        text=_csub["SMILES"],
+                        hovertemplate="<b>Cluster %{meta}</b><br>%{text}<br>PC1=%{x:.2f}<br>PC2=%{y:.2f}<extra></extra>",
+                        meta=[cid] * len(_csub),
+                    ))
+            else:
+                _cfig.add_trace(go.Scatter(
+                    x=_cpca_df["PC1"], y=_cpca_df["PC2"],
+                    mode="markers",
+                    marker=dict(size=8, color=_cpca_df["Cluster_ID"], colorscale="Turbo",
+                                opacity=0.8, showscale=True,
+                                colorbar=dict(title="Cluster")),
+                    text=_cpca_df["SMILES"],
+                    customdata=_cpca_df["Cluster_ID"],
+                    hovertemplate="<b>Cluster %{customdata}</b><br>%{text}<br>PC1=%{x:.2f}<br>PC2=%{y:.2f}<extra></extra>",
+                ))
+
+            _cfig.update_layout(
+                xaxis_title=f"PC1 ({_cvr[0]*100:.1f}% var.)",
+                yaxis_title=f"PC2 ({_cvr[1]*100:.1f}% var.)",
+                height=500, width=700,
+                margin=dict(l=60, r=30, t=30, b=60),
+                paper_bgcolor="white", plot_bgcolor="white",
+                legend=dict(x=1.02, y=1, bgcolor="rgba(255,255,255,0.8)",
+                            font=dict(size=10)),
+                xaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                yaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+            )
+            st.plotly_chart(_cfig, use_container_width=True)
+            st.caption("Each point is a molecule projected into 2D chemical space via PCA on Morgan fingerprints. "
+                       "Points colored by cluster assignment. Well-separated clusters in PCA space suggest "
+                       "the clustering captures genuine chemical diversity. Overlapping clusters may indicate "
+                       "the boundary between groups is gradual rather than sharp.")
+
+        # ── Diverse Subset Selection ──
+        section_banner("Diverse Subset Selection")
+        _cl_max_div = min(_cl_nc, 20)
+        _cl_div_n = st.number_input(
+            "Number of diverse representatives to select",
+            min_value=1, max_value=_cl_nc, value=_cl_max_div,
+            key="cl_div_n",
+        )
+        _cl_div_df = _cl_reps.head(_cl_div_n)[["Cluster_ID", "Size", "SMILES"]].copy()
+        st.write(f"**{len(_cl_div_df)}** representative molecules selected (one medoid per cluster, "
+                 f"from the {len(_cl_div_df)} largest clusters).")
+        st.dataframe(_cl_div_df, use_container_width=True, hide_index=True)
+
+        _cl_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            "Download diverse subset CSV",
+            data=_cl_div_df.to_csv(index=False),
+            file_name=f"diverse_subset_{_cl_ts}.csv",
+            mime="text/csv", key="cl_dl_diverse",
+        )
+        st.caption("A diverse subset contains one representative molecule per cluster, maximizing "
+                   "chemical coverage with minimal redundancy. Useful for screening library design, "
+                   "selecting training set compounds, or prioritizing molecules for experimental testing.")
+
+        # ── Full Cluster Assignments ──
+        section_banner("Full Cluster Assignments")
+        with st.expander(f"All {_cl_n} molecules with cluster assignments", expanded=False):
+            st.dataframe(_cl_res["assignments"], use_container_width=True, hide_index=True, height=400)
+
+        st.download_button(
+            "Download full cluster assignments CSV",
+            data=_cl_res["assignments"].to_csv(index=False),
+            file_name=f"cluster_assignments_{_cl_ts}.csv",
+            mime="text/csv", key="cl_dl_full",
+        )
+
+        st.caption(
+            "**Butina vs Hierarchical:** Butina clustering uses a distance cutoff — molecules within the "
+            "cutoff are grouped together, producing a variable number of clusters that reflects natural "
+            "groupings in the data. Hierarchical clustering produces a fixed number of clusters (user-specified "
+            "or auto-selected via silhouette score), which is useful when you need a specific number of groups. "
+            "Both use Tanimoto distance on molecular fingerprints."
+        )
