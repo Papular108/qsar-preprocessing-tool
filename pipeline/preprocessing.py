@@ -1,8 +1,11 @@
 from rdkit import Chem
 import sys
 from rdkit.Chem import RDConfig
-sys.path.append(RDConfig.RDContribDir + "/SA_Score")
-import sascorer
+try:
+    sys.path.append(RDConfig.RDContribDir + "/SA_Score")
+    import sascorer
+except Exception:
+    sascorer = None
 from rdkit.Chem import Descriptors
 from molvs import Standardizer
 from rdkit.Chem.SaltRemover import SaltRemover
@@ -360,6 +363,8 @@ def compute_synthetic_accessibility(mol):
             sa_score (float): 1 = easy to synthesize, 10 = very difficult
             error_message (str or None)
     """
+    if sascorer is None:
+        return None, "SA Score unavailable (RDKit Contrib/SA_Score not found)"
     try:
         score = sascorer.calculateScore(mol)
         return score, None

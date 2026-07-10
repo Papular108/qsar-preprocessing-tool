@@ -8,8 +8,11 @@ from datetime import datetime
 from rdkit import rdBase, Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, RDConfig
 from rdkit.Chem.inchi import MolToInchi, MolFromInchi, InchiToInchiKey
-sys.path.append(RDConfig.RDContribDir + "/SA_Score")
-import sascorer
+try:
+    sys.path.append(RDConfig.RDContribDir + "/SA_Score")
+    import sascorer
+except Exception:
+    sascorer = None
 from pipeline.preprocessing import (
     run_preprocessing_pipeline, label_activity, clean_dataset,
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
@@ -858,7 +861,11 @@ if st.session_state["active_tab"] == "preprocessing":
         enable_muegge = st.checkbox("Muegge", help="Combined pharmacophore-like property rule")
     with col3:
         enable_brenk = st.checkbox("Brenk", help="Flags additional structural alerts beyond PAINS")
-        enable_sa_score = st.checkbox("SA Score", help="Report synthetic accessibility score (1=easy, 10=hard) for kept molecules. Informational only, does not filter.")
+        if sascorer is not None:
+            enable_sa_score = st.checkbox("SA Score", help="Report synthetic accessibility score (1=easy, 10=hard) for kept molecules. Informational only, does not filter.")
+        else:
+            st.checkbox("SA Score", disabled=True, help="SA Score unavailable (RDKit Contrib/SA_Score not found in this environment)")
+            enable_sa_score = False
         enable_qed = st.checkbox("QED Score", help="Quantitative Estimate of Druglikeness (0=least drug-like, 1=most drug-like; Bickerton et al., 2012). Informational only, does not filter.")
 
     if st.button("Run Pipeline"):
@@ -1685,12 +1692,16 @@ if st.session_state["active_tab"] == "explorer":
             _exp_mr = Descriptors.MolMR(_exp_mol)
             _exp_arom_heavy = sum(1 for a in _exp_mol.GetAtoms() if a.GetIsAromatic())
             _exp_qed, _exp_qed_err = compute_qed(_exp_mol)
-            try:
-                _exp_sa = sascorer.calculateScore(_exp_mol)
-                _exp_sa_err = None
-            except Exception as e:
+            if sascorer is not None:
+                try:
+                    _exp_sa = sascorer.calculateScore(_exp_mol)
+                    _exp_sa_err = None
+                except Exception as e:
+                    _exp_sa = None
+                    _exp_sa_err = str(e)
+            else:
                 _exp_sa = None
-                _exp_sa_err = str(e)
+                _exp_sa_err = "SA Score unavailable in this environment"
             _exp_is_pains, _exp_pains_name = check_pains(_exp_mol)
             _exp_is_brenk, _exp_brenk_name = check_brenk(_exp_mol)
             _esol_logs, _esol_mg, _esol_mol_sol, _esol_class, _esol_err = compute_esol(_exp_mol)
