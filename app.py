@@ -23,6 +23,11 @@ from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_
 from pipeline.methodology import generate_methods_text
 from pipeline.pains_catalog import get_pains_explanation, get_brenk_explanation
 from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_dpp4_inhibitors, get_common_analgesics
+from pipeline.ui_components import (
+    VERSION, timestamp_filename, render_dataset_status_bar, render_empty_state,
+    render_provenance_caption, render_next_step_hint, render_footer,
+    migrate_legacy_session_state,
+)
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
 
@@ -270,6 +275,9 @@ if "active_category" not in st.session_state:
 if "active_tab" not in st.session_state:
     st.session_state["active_tab"] = "preprocessing"
 
+# Migrate legacy session state → active_dataset (one-time, idempotent)
+migrate_legacy_session_state()
+
 # Defensive: ensure active_tab belongs to active_category
 if _TAB_TO_CATEGORY.get(st.session_state["active_tab"]) != st.session_state["active_category"]:
     st.session_state["active_tab"] = _NAV_STRUCTURE[st.session_state["active_category"]]["tabs"][0][0]
@@ -320,10 +328,28 @@ if st.session_state["active_tab"] == "preprocessing":
     st.header("Batch preprocessing")
     st.write("Upload a file with one SMILES string per line, or paste them below.")
 
+    # ── Landing card for first-time visitors ──────────────────────────────────
+    if "active_dataset" not in st.session_state and "pipeline_result" not in st.session_state:
+        st.markdown(
+            '<div style="background:linear-gradient(135deg,#f8f9fa,#e9ecef);border-radius:12px;'
+            'padding:32px;margin-bottom:24px;border:1px solid #dee2e6;">'
+            '<h3 style="margin-top:0;color:#1a1a2e;">Welcome to the QSAR Preprocessing Tool</h3>'
+            '<p style="color:#495057;font-size:1rem;margin-bottom:20px;">'
+            'Clean, filter, and featurize molecular datasets for QSAR modeling and virtual screening. '
+            'Upload your own data or start with an example dataset.</p>'
+            '<p style="color:#6c757d;font-size:0.95rem;margin-bottom:4px;"><strong>Quick start:</strong></p>'
+            '<ol style="color:#6c757d;font-size:0.95rem;margin-top:0;">'
+            '<li><strong>Upload</strong> a CSV/TXT with SMILES, or load an example dataset below</li>'
+            '<li><strong>Preprocess</strong> — standardize, filter (Lipinski, PAINS, etc.), deduplicate</li>'
+            '<li><strong>Analyze</strong> — explore molecules, cluster, split for modeling</li></ol>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+
     if "pasted_smiles" not in st.session_state:
         st.session_state["pasted_smiles"] = ""
 
-    with st.expander("Try with example data", expanded=False):
+    with st.expander("Try with example data", expanded="active_dataset" not in st.session_state and "pipeline_result" not in st.session_state):
         _EXAMPLE_OPTIONS = {
             "FDA-approved drugs (20 molecules)": get_fda_approved_drugs,
             "PAINS-rich demo set (15 molecules)": get_pains_demo_set,
@@ -337,9 +363,12 @@ if st.session_state["active_tab"] == "preprocessing":
         st.caption(description_ex)
         if st.button("Load example data"):
             st.session_state["pasted_smiles"] = "\n".join(smiles_list_ex)
+            st.session_state["_example_source"] = example_choice
             st.rerun()
 
     uploaded_file = st.file_uploader("Upload a .txt, .csv, or .xlsx file with SMILES", type=["txt", "csv", "xlsx"])
+    if uploaded_file is not None:
+        st.session_state.pop("_example_source", None)
     pasted_smiles = st.text_area("Or paste SMILES here (one per line)", key="pasted_smiles")
 
     # ── Early parse of uploaded CSV/XLSX for column detection ────────────────────
@@ -886,6 +915,39 @@ if st.session_state["active_tab"] == "preprocessing":
             st.session_state["pipeline_label_map"] = dict(_activity_label_map)
             st.session_state["pipeline_pval_map"] = dict(_activity_pval_map)
             st.session_state["pipeline_pchembl_map"] = dict(_pchembl_fill_map)
+
+            # ── Populate active_dataset ───────────────────────────────────
+            if uploaded_file is not None:
+                _source_filename = uploaded_file.name
+            elif st.session_state.get("_example_source"):
+                _source_filename = st.session_state.pop("_example_source") + " (example)"
+            elif pasted_smiles.strip():
+                _source_filename = "Pasted SMILES"
+            else:
+                _source_filename = "Unknown"
+            st.session_state["active_dataset"] = {
+                "source_filename": _source_filename,
+                "loaded_at": datetime.now().isoformat(),
+                "n_original": len(smiles_list),
+                "n_molecules": len(result["kept_smiles"]),
+                "mols": result["kept_mols"],
+                "smiles": result["kept_smiles"],
+                "preprocessing_config": st.session_state["pipeline_settings"],
+                "pipeline_result": st.session_state["pipeline_result"],
+                "label_map": st.session_state["pipeline_label_map"],
+                "pval_map": st.session_state["pipeline_pval_map"],
+                "pchembl_map": st.session_state["pipeline_pchembl_map"],
+            }
+            # Clear stale downstream results (dataset changed)
+            # NOTE: if these keys are renamed in a future cleanup, update this list too.
+            for _stale_key in ("split_results", "split_data_hash", "split_pca_current",
+                               "split_pca_random", "cluster_results", "cluster_data_hash",
+                               "cluster_pca", "scr_results", "featurization_result"):
+                st.session_state.pop(_stale_key, None)
+            # Clear next-step hint dismissals so they re-appear for new data
+            for _hk in list(st.session_state):
+                if _hk.startswith("hint_dismissed_"):
+                    del st.session_state[_hk]
 
     # ── Display pipeline results (persistent) ────────────────────────────────────
     if "pipeline_result" in st.session_state:
@@ -1496,10 +1558,24 @@ if st.session_state["active_tab"] == "preprocessing":
         )
         st.caption("Tip: click inside the text box, then press Ctrl+A / Cmd+A to select all.")
 
+    # ── Next-step hint (after preprocessing) ──────────────────────────────────
+    if "active_dataset" in st.session_state:
+        render_next_step_hint(
+            "preprocessing_complete",
+            "Preprocessing complete. Explore your dataset or prepare it for modeling:",
+            [
+                ("Molecule Explorer", "explorer", "analyze"),
+                ("Cluster Analysis", "clustering", "analyze"),
+                ("Train/Test Split", "splitting", "model"),
+            ],
+        )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 2: Molecule Explorer
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "explorer":
+    render_dataset_status_bar()
+
     st.header("Molecule Explorer")
     st.write("Enter one or more SMILES strings to see a full physicochemical and druglikeness profile. "
              "Optionally add a name after each SMILES, separated by a space or tab.")
@@ -1730,6 +1806,11 @@ if st.session_state["active_tab"] == "explorer":
                 "Fingerprint type (preview)",
                 ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon", "pattern", "layered"],
                 key="explorer_fp_type",
+                help="Morgan: circular, counts atom environments (most common for QSAR). "
+                     "FCFP: like Morgan but uses pharmacophoric atom types. "
+                     "MACCS: 166 predefined structural keys. "
+                     "Topological: path-based. Atom pair / Torsion: encode atom-pair or dihedral relationships. "
+                     "Avalon: combines path and feature fingerprints.",
             )
             if _prev_fp_type == "maccs":
                 _prev_n_bits = 167
@@ -1737,11 +1818,15 @@ if st.session_state["active_tab"] == "explorer":
                 _prev_n_bits = st.number_input(
                     "Number of bits (preview)", min_value=128, max_value=4096, value=2048, step=128,
                     key="explorer_fp_nbits",
+                    help="Length of the bit vector. More bits = fewer hash collisions = more discriminating, "
+                         "but larger feature vectors. 2048 is standard for most QSAR applications.",
                 )
             if _prev_fp_type in ("morgan", "fcfp"):
                 _prev_radius = st.number_input(
                     "Radius (preview)", min_value=1, max_value=4, value=2, step=1,
                     key="explorer_fp_radius",
+                    help="Number of bonds from each atom to include in the circular environment. "
+                         "Radius 2 (≈ECFP4) is standard. Radius 3 captures larger substructures but may overfit.",
                 )
             else:
                 _prev_radius = 2
@@ -1773,11 +1858,24 @@ if st.session_state["active_tab"] == "explorer":
         import plotly.graph_objects as go
 
         section_banner("Boiled-Egg Diagram")
-
+        _be_ds = st.session_state.get("active_dataset")
         _be_has_pipeline = (
-            "pipeline_result" in st.session_state
-            and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 2
+            _be_ds is not None and len(_be_ds.get("smiles", [])) >= 2
         )
+
+        # ── Display options ──
+        if _be_has_pipeline:
+            _be_show_bg = st.checkbox(
+                "Show preprocessed dataset as background context",
+                value=False, key="be_show_bg",
+                help="Overlay your preprocessed molecules as faint background dots for reference.",
+            )
+        else:
+            _be_show_bg = False
+
+        with st.expander("Display options"):
+            _be_show_names = st.checkbox("Show molecule names on plot", value=False, key="be_show_names",
+                                         help="Label each query molecule with its name. Background dataset dots are never labeled.")
 
         @st.cache_data
         def _cached_boiled_egg(smiles_tuple, labels_tuple):
@@ -1799,25 +1897,33 @@ if st.session_state["active_tab"] == "explorer":
                 rows.append(row)
             return _be_pd.DataFrame(rows)
 
-        if _be_has_pipeline:
-            _be_result = st.session_state["pipeline_result"]
-            _be_label_map = st.session_state.get("pipeline_label_map", {})
-            _be_labels = [_be_label_map.get(s) for s in _be_result["kept_smiles"]]
-            _be_has_labels = _be_label_map and any(l is not None for l in _be_labels)
-            _be_df = _cached_boiled_egg(
-                tuple(_be_result["kept_smiles"]),
-                tuple(_be_labels) if _be_has_labels else None,
-            )
-            _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(
-                _be_df, label_col="Activity" if _be_has_labels else None,
-            )
-        else:
-            # Build diagram from user molecules only (no FDA reference dots)
-            _be_user_smiles = [smi for smi, _name, _mol in _be_mols]
-            _be_df = _cached_boiled_egg(tuple(_be_user_smiles), None)
-            _be_chart, _be_n_gi, _be_n_bbb, _be_result_df, _be_sampled = plot_boiled_egg(_be_df)
+        # ── Build query molecule data (always needed for classification + plotting) ──
+        _be_query_smiles = [smi for smi, _name, _mol in _be_mols]
+        _be_query_df = _cached_boiled_egg(tuple(_be_query_smiles), None)
+        # Classify query molecules for zone counts
+        _be_chart, _be_q_n_gi, _be_q_n_bbb, _be_q_result_df, _ = plot_boiled_egg(
+            _be_query_df, draw_molecules=False,
+        )
 
-        # Plot all user molecules: star for selected, circle for others
+        # ── Background dataset (only when toggle is on) ──
+        _be_bg_n_gi, _be_bg_n_bbb, _be_bg_result_df, _be_bg_sampled = 0, 0, None, False
+        if _be_show_bg and _be_has_pipeline:
+            _be_bg_df = _cached_boiled_egg(tuple(_be_ds["smiles"]), None)
+            _, _be_bg_n_gi, _be_bg_n_bbb, _be_bg_result_df, _be_bg_sampled = plot_boiled_egg(
+                _be_bg_df, draw_molecules=False,
+            )
+            # Add faint background dots
+            _be_bg_plot = _be_bg_df if len(_be_bg_df) <= 300 else _be_bg_df.sample(n=300, random_state=42)
+            _be_chart.add_trace(go.Scatter(
+                x=_be_bg_plot["TPSA"], y=_be_bg_plot["WLOGP"],
+                mode="markers",
+                marker=dict(size=5, color="#aaaaaa", opacity=0.25),
+                name="Dataset",
+                text=_be_bg_plot["SMILES"],
+                hovertemplate="<b>Dataset</b><br>%{text}<br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+            ))
+
+        # ── Plot query molecules (always) ──
         _be_sel_idx = st.session_state.get("explorer_mol_idx", 0) if len(_be_mols) > 1 else 0
         _be_other_smi, _be_other_name, _be_other_tpsa, _be_other_wlogp = [], [], [], []
         _be_sel_smi, _be_sel_name, _be_sel_tpsa, _be_sel_wlogp = None, None, None, None
@@ -1834,37 +1940,50 @@ if st.session_state["active_tab"] == "explorer":
                 _be_other_tpsa.append(_b_tpsa)
                 _be_other_wlogp.append(_b_wlogp)
 
-        # Other user molecules as labeled circles
+        def _be_label(name, smi):
+            """Label text for query molecules: name if available, else truncated SMILES."""
+            if name and not name.startswith("Molecule "):
+                return name
+            return smi[:15] + ("..." if len(smi) > 15 else "")
+
+        _be_query_mode = "markers+text" if _be_show_names else "markers"
+
+        # Non-selected query molecules as blue dots
         if _be_other_smi:
+            _be_other_labels = [_be_label(n, s) for n, s in zip(_be_other_name, _be_other_smi)]
             _be_chart.add_trace(go.Scatter(
                 x=_be_other_tpsa, y=_be_other_wlogp,
-                mode="markers+text",
-                marker=dict(size=12, color="#FF6347", opacity=0.9,
-                            line=dict(width=1.5, color="black")),
+                mode=_be_query_mode,
+                marker=dict(size=10, color="#1E90FF", opacity=0.9,
+                            line=dict(width=1.5, color="white")),
                 name="Your molecules",
-                text=_be_other_name,
+                text=_be_other_labels,
                 textposition="top center",
-                textfont=dict(size=10),
+                textfont=dict(size=10, color="#1E90FF"),
                 hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
             ))
 
-        # Selected molecule as star
+        # Selected molecule as blue star
         if _be_sel_smi is not None:
+            _be_sel_label = _be_label(_be_sel_name, _be_sel_smi)
             _be_chart.add_trace(go.Scatter(
                 x=[_be_sel_tpsa], y=[_be_sel_wlogp],
-                mode="markers+text",
+                mode="markers+text",  # always show name for selected molecule
                 marker=dict(size=18, color="#1E90FF", opacity=1.0,
                             symbol="star",
-                            line=dict(width=2, color="black")),
+                            line=dict(width=2, color="white")),
                 name=f"Selected: {_be_sel_name}",
-                text=[_be_sel_name],
+                text=[_be_sel_label],
                 textposition="top center",
                 textfont=dict(size=11, color="#1E90FF"),
                 hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
             ))
 
-        if _be_has_pipeline and _be_sampled:
-            st.info(f"Showing 300 of {len(_be_df)} pipeline molecules")
+        # Bump figure size
+        _be_chart.update_layout(width=800, height=600)
+
+        if _be_show_bg and _be_bg_sampled:
+            st.info(f"Showing 300 of {len(_be_bg_df)} dataset molecules as background")
         st.plotly_chart(_be_chart, use_container_width=True, config={"displayModeBar": False}, key="explorer_boiled_egg")
 
         st.caption(
@@ -1872,11 +1991,15 @@ if st.session_state["active_tab"] == "explorer":
             "Molecules inside the yellow ellipse are predicted to be brain-penetrant (BBB+)."
         )
 
-        if _be_has_pipeline:
-            st.write(f"**{_be_n_gi}** molecules in GI absorption zone, **{_be_n_bbb}** molecules in BBB zone")
+        # Zone summary — describe what's shown
+        if _be_show_bg and _be_has_pipeline:
+            _be_bg_total = len(_be_bg_result_df) if _be_bg_result_df is not None else 0
+            st.write(f"**{_be_bg_n_gi}** in GI zone, **{_be_bg_n_bbb}** in BBB zone")
+            st.caption(f"Zone distribution across your {_be_bg_total:,}-molecule dataset.")
+            render_provenance_caption(_be_ds)
             with st.expander("Molecules by zone"):
-                _gi_mols = _be_result_df[_be_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
-                _bbb_mols = _be_result_df[_be_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+                _gi_mols = _be_bg_result_df[_be_bg_result_df["in_GI"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
+                _bbb_mols = _be_bg_result_df[_be_bg_result_df["in_BBB"]][["SMILES", "WLOGP", "TPSA"]].reset_index(drop=True)
                 _be_z1, _be_z2 = st.columns(2)
                 with _be_z1:
                     st.markdown("**GI absorption zone**")
@@ -1891,7 +2014,8 @@ if st.session_state["active_tab"] == "explorer":
                     else:
                         st.info("No molecules in BBB permeability zone.")
         else:
-            st.caption("Your molecules are shown as labeled dots. The currently selected molecule is highlighted with a star.")
+            st.write(f"**{_be_q_n_gi}** in GI zone, **{_be_q_n_bbb}** in BBB zone")
+            st.caption(f"Zone distribution for your {len(_be_query_df)} query molecule(s).")
 
         st.info(
             "The BOILED-Egg model (Daina & Zoete, 2016) predicts passive GI absorption and BBB permeability "
@@ -1946,12 +2070,13 @@ if st.session_state["active_tab"] == "explorer":
         _sim_target_smiles = []
         _sim_target_labels = {}
         if _sim_tgt_source == "Pipeline kept molecules":
-            if "pipeline_result" in st.session_state and st.session_state["pipeline_result"]["kept_smiles"]:
-                _sim_target_smiles = st.session_state["pipeline_result"]["kept_smiles"]
-                _sim_target_labels = st.session_state.get("pipeline_label_map", {})
-                st.success(f"{len(_sim_target_smiles)} molecules from pipeline")
+            _sim_ds = st.session_state.get("active_dataset")
+            if _sim_ds and _sim_ds["smiles"]:
+                _sim_target_smiles = _sim_ds["smiles"]
+                _sim_target_labels = _sim_ds.get("label_map") or {}
+                st.success(f"{len(_sim_target_smiles)} molecules from active dataset")
             else:
-                st.info("Run the preprocessing pipeline first.")
+                st.info("No active dataset. Run the Preprocessing tab first.")
         else:
             _sim_tgt_file = st.file_uploader(
                 "Upload .txt / .csv / .xlsx",
@@ -1984,14 +2109,17 @@ if st.session_state["active_tab"] == "explorer":
     # --- Settings ---
     _sim_s1, _sim_s2, _sim_s3 = st.columns(3)
     with _sim_s1:
-        _sim_threshold = st.number_input("Similarity threshold", min_value=0.0, max_value=1.0, value=0.4, step=0.05, key="sim_threshold")
+        _sim_threshold = st.number_input("Similarity threshold", min_value=0.0, max_value=1.0, value=0.4, step=0.05, key="sim_threshold",
+                                          help="Minimum Tanimoto similarity to include a hit. 0.4 is a permissive cutoff for analog discovery; 0.7+ finds close analogs.")
     with _sim_s2:
-        _sim_top_n = st.number_input("Top N per reference", min_value=1, max_value=50, value=5, key="sim_top_n")
+        _sim_top_n = st.number_input("Top N per reference", min_value=1, max_value=50, value=5, key="sim_top_n",
+                                     help="Maximum number of hits to return per reference molecule, ranked by similarity.")
     with _sim_s3:
         _sim_fp_type = st.selectbox(
             "Fingerprint type",
             ["morgan", "fcfp", "maccs", "topological", "atom_pair", "torsion", "avalon"],
             key="sim_fp_type",
+            help="Fingerprint used for Tanimoto comparison. Morgan (ECFP-like) is the most common choice for similarity searching.",
         )
 
     # --- Run ---
@@ -2040,7 +2168,8 @@ if st.session_state["active_tab"] == "explorer":
         _bsr = st.session_state["batch_sim_results"]
         _bsr_refs = st.session_state["batch_sim_refs"]
         _bsr_targets = st.session_state["batch_sim_targets"]
-        _bsr_label_map = st.session_state.get("pipeline_label_map", {})
+        _bsr_ds = st.session_state.get("active_dataset")
+        _bsr_label_map = (_bsr_ds.get("label_map") or {}) if _bsr_ds else {}
 
         _total_hits = sum(len(v) for v in _bsr.values())
         st.write(f"**{_total_hits}** hits across **{len(_bsr_refs)}** reference molecules (threshold \u2265 {_sim_threshold})")
@@ -2173,7 +2302,7 @@ if st.session_state["active_tab"] == "explorer":
             st.download_button(
                 "Download similarity results as CSV",
                 data=_dl_df.to_csv(index=False),
-                file_name="similarity_results.csv",
+                file_name=timestamp_filename("similarity_results"),
                 mime="text/csv",
                 key="sim_download",
             )
@@ -2189,6 +2318,8 @@ if st.session_state["active_tab"] == "explorer":
 # TAB 3: Filter Comparison
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "comparison":
+    render_dataset_status_bar()
+
     st.header("Filter Comparison")
     st.write(
         "Run the preprocessing pipeline with two different filter configurations on the same "
@@ -2250,23 +2381,25 @@ if st.session_state["active_tab"] == "comparison":
     with _cmp_ca:
         st.markdown("**Configuration A**")
         _cmp_max_a = st.number_input("Max Lipinski violations", min_value=0, max_value=4,
-                                      value=1, step=1, key="cmp_max_viol_a")
+                                      value=1, step=1, key="cmp_max_viol_a",
+                                      help="0 = strict (no violations allowed), 1 = standard threshold, higher = more permissive.")
         st.caption("Additional filters:")
-        _cmp_brenk_a = st.checkbox("Brenk", key="cmp_brenk_a")
-        _cmp_veber_a = st.checkbox("Veber", key="cmp_veber_a")
-        _cmp_ghose_a = st.checkbox("Ghose", key="cmp_ghose_a")
-        _cmp_egan_a = st.checkbox("Egan", key="cmp_egan_a")
-        _cmp_muegge_a = st.checkbox("Muegge", key="cmp_muegge_a")
+        _cmp_brenk_a = st.checkbox("Brenk", key="cmp_brenk_a", help="Flags structural alerts beyond PAINS.")
+        _cmp_veber_a = st.checkbox("Veber", key="cmp_veber_a", help="Rotatable bonds ≤10 and TPSA ≤140.")
+        _cmp_ghose_a = st.checkbox("Ghose", key="cmp_ghose_a", help="Drug-like ranges for MW, LogP, refractivity, atom count.")
+        _cmp_egan_a = st.checkbox("Egan", key="cmp_egan_a", help="LogP and TPSA within the Egan egg boundary.")
+        _cmp_muegge_a = st.checkbox("Muegge", key="cmp_muegge_a", help="Combined pharmacophore-like property rules.")
     with _cmp_cb:
         st.markdown("**Configuration B**")
         _cmp_max_b = st.number_input("Max Lipinski violations", min_value=0, max_value=4,
-                                      value=0, step=1, key="cmp_max_viol_b")
+                                      value=0, step=1, key="cmp_max_viol_b",
+                                      help="0 = strict (no violations allowed), 1 = standard threshold, higher = more permissive.")
         st.caption("Additional filters:")
-        _cmp_brenk_b = st.checkbox("Brenk", key="cmp_brenk_b", value=True)
-        _cmp_veber_b = st.checkbox("Veber", key="cmp_veber_b", value=True)
-        _cmp_ghose_b = st.checkbox("Ghose", key="cmp_ghose_b")
-        _cmp_egan_b = st.checkbox("Egan", key="cmp_egan_b")
-        _cmp_muegge_b = st.checkbox("Muegge", key="cmp_muegge_b")
+        _cmp_brenk_b = st.checkbox("Brenk", key="cmp_brenk_b", value=True, help="Flags structural alerts beyond PAINS.")
+        _cmp_veber_b = st.checkbox("Veber", key="cmp_veber_b", value=True, help="Rotatable bonds ≤10 and TPSA ≤140.")
+        _cmp_ghose_b = st.checkbox("Ghose", key="cmp_ghose_b", help="Drug-like ranges for MW, LogP, refractivity, atom count.")
+        _cmp_egan_b = st.checkbox("Egan", key="cmp_egan_b", help="LogP and TPSA within the Egan egg boundary.")
+        _cmp_muegge_b = st.checkbox("Muegge", key="cmp_muegge_b", help="Combined pharmacophore-like property rules.")
 
     if st.button("Compare", type="primary", key="cmp_run"):
         _cmp_list = []
@@ -2354,6 +2487,8 @@ if st.session_state["active_tab"] == "comparison":
 # TAB 4: Molecule Converter
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "converter":
+    render_dataset_status_bar()
+
     st.header("Molecule Converter")
     st.write(
         "Convert between SMILES, InChI, InChIKey, and molecular formula. "
@@ -2490,11 +2625,10 @@ if st.session_state["active_tab"] == "converter":
                 _conv_nok = len(_conv_slist) - _conv_nfail
                 st.write(f"**{_conv_nok}** converted successfully, **{_conv_nfail}** failed to parse.")
                 st.dataframe(_conv_result_df, use_container_width=True)
-                _conv_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
                     "Download conversion table as CSV",
                     data=_conv_result_df.to_csv(index=False),
-                    file_name=f"molecule_conversions_{_conv_ts}.csv",
+                    file_name=timestamp_filename("converter_results"),
                     mime="text/csv", key="converter_batch_dl",
                 )
 
@@ -2502,6 +2636,7 @@ if st.session_state["active_tab"] == "converter":
 # TAB 5: Similarity Screening
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "screening":
+    render_dataset_status_bar()
 
     st.header("Multi-Reference Similarity Screening")
     st.write("Compare a set of reference molecules against a target dataset to find similar compounds using Tanimoto similarity.")
@@ -2515,7 +2650,6 @@ if st.session_state["active_tab"] == "screening":
 
         _SCR_REF_PRESETS = {
             "Common analgesics": get_common_analgesics,
-            "DPP-4 inhibitors": get_dpp4_inhibitors,
         }
         _scr_ref_preset = st.selectbox("Load a preset", ["(none)"] + list(_SCR_REF_PRESETS.keys()),
                                         key="scr_ref_preset")
@@ -2540,11 +2674,12 @@ if st.session_state["active_tab"] == "screening":
 
         _scr_tgt_smiles_list = []
         if _scr_tgt_source == "Use preprocessed results":
-            if "kept_mols_for_featurization" in st.session_state and st.session_state["kept_mols_for_featurization"]:
-                _scr_tgt_smiles_list = [Chem.MolToSmiles(m) for m in st.session_state["kept_mols_for_featurization"]]
-                st.success(f"{len(_scr_tgt_smiles_list)} molecules from preprocessing pipeline")
+            _scr_ds = st.session_state.get("active_dataset")
+            if _scr_ds and _scr_ds["smiles"]:
+                _scr_tgt_smiles_list = _scr_ds["smiles"]
+                st.success(f"{len(_scr_tgt_smiles_list)} molecules from active dataset")
             else:
-                st.info("No preprocessed molecules available. Run the Preprocessing tab first, or upload/paste targets.")
+                st.warning("No active dataset. Upload or paste targets below, or go to Preprocessing first.")
         elif _scr_tgt_source == "Upload file":
             _scr_tgt_file = st.file_uploader("Upload target file", type=["txt", "csv", "xlsx"], key="scr_tgt_file")
             if _scr_tgt_file is not None:
@@ -2583,14 +2718,19 @@ if st.session_state["active_tab"] == "screening":
         _scr_s1, _scr_s2, _scr_s3, _scr_s4 = st.columns(4)
         with _scr_s1:
             _scr_fp_type = st.selectbox("Fingerprint", ["morgan", "fcfp", "maccs", "topological",
-                                        "atom_pair", "torsion", "avalon"], key="scr_fp_type")
+                                        "atom_pair", "torsion", "avalon"], key="scr_fp_type",
+                                        help="Fingerprint used for Tanimoto comparison. Morgan (ECFP-like) is the most common choice.")
         with _scr_s2:
-            _scr_radius = st.number_input("Radius", min_value=1, max_value=4, value=2, key="scr_radius")
+            _scr_radius = st.number_input("Radius", min_value=1, max_value=4, value=2, key="scr_radius",
+                                          help="Circular fingerprint radius. 2 (≈ECFP4) is standard. Only applies to Morgan/FCFP.")
         with _scr_s3:
-            _scr_nbits = st.selectbox("Bits", [512, 1024, 2048], index=2, key="scr_nbits")
+            _scr_nbits = st.selectbox("Bits", [512, 1024, 2048], index=2, key="scr_nbits",
+                                      help="Fingerprint length. More bits = fewer hash collisions. 2048 is standard.")
         with _scr_s4:
-            _scr_threshold = st.slider("Min. similarity", 0.0, 1.0, 0.4, 0.05, key="scr_threshold")
-        _scr_topn = st.number_input("Max hits per reference", min_value=1, max_value=100, value=10, key="scr_topn")
+            _scr_threshold = st.slider("Min. similarity", 0.0, 1.0, 0.4, 0.05, key="scr_threshold",
+                                       help="Minimum Tanimoto similarity to include a hit. 0.4 is permissive; 0.7+ finds close analogs only.")
+        _scr_topn = st.number_input("Max hits per reference", min_value=1, max_value=100, value=10, key="scr_topn",
+                                    help="Maximum number of hits to return per reference molecule, ranked by similarity.")
 
     # ── Run screening ──
     if st.button("Run Similarity Screening", type="primary", key="scr_run"):
@@ -2653,6 +2793,7 @@ if st.session_state["active_tab"] == "screening":
         _scr_res = st.session_state["scr_results"]
         _scr_stats = _scr_res["stats"]
 
+        render_provenance_caption()
         section_banner("Screening Results")
         _stat1, _stat2, _stat3 = st.columns(3)
         with _stat1:
@@ -2726,11 +2867,10 @@ if st.session_state["active_tab"] == "screening":
             st.write(f"**{len(_all_hits)}** unique target molecules matched at least one reference above the threshold.")
             st.dataframe(_all_hits, use_container_width=True, hide_index=True)
 
-            _scr_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             st.download_button(
                 "Download all hits as CSV",
                 data=_all_hits.to_csv(index=False),
-                file_name=f"similarity_screening_hits_{_scr_ts}.csv",
+                file_name=timestamp_filename("screening_hits"),
                 mime="text/csv",
                 key="scr_dl_hits",
             )
@@ -2747,6 +2887,7 @@ if st.session_state["active_tab"] == "screening":
 # TAB 6: Train/Test Split
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "splitting":
+    render_dataset_status_bar()
 
     st.header("Train/Test Split")
     st.write("Generate realistic train/test splits for downstream QSAR modeling. "
@@ -2759,20 +2900,17 @@ if st.session_state["active_tab"] == "splitting":
             return None
         return (smiles_list[0], smiles_list[-1], len(smiles_list))
 
-    # ── Check for preprocessed data ──
-    _spl_mols = st.session_state.get("kept_mols_for_featurization", [])
-    if not _spl_mols:
-        st.info("No preprocessed molecules available. Run the **Preprocessing** tab first to generate a dataset, "
-                "or use the example data loader below.")
-        if st.button("Load FDA-approved drugs (20 molecules)", key="spl_load_fda"):
-            _fda_smi, _ = get_fda_approved_drugs()
-            _fda_mols = [Chem.MolFromSmiles(s) for s in _fda_smi]
-            _fda_mols = [m for m in _fda_mols if m is not None]
-            st.session_state["kept_mols_for_featurization"] = _fda_mols
-            st.rerun()
+    # ── Check for active dataset ──
+    _spl_ds = st.session_state.get("active_dataset")
+    if not _spl_ds:
+        render_empty_state(
+            "✂️",
+            "No active dataset. Preprocess molecules first to generate train/test splits.",
+        )
         st.stop()
 
-    _spl_smiles = [Chem.MolToSmiles(m) for m in _spl_mols]
+    _spl_mols = _spl_ds["mols"]
+    _spl_smiles = _spl_ds["smiles"]
     _spl_current_hash = _split_data_hash(_spl_smiles)
 
     # Staleness: clear old results if the dataset changed
@@ -2782,17 +2920,20 @@ if st.session_state["active_tab"] == "splitting":
         st.warning("The preprocessed dataset has changed since the last split. Please re-run the split.")
     st.session_state["split_data_hash"] = _spl_current_hash
 
-    st.write(f"**{len(_spl_mols)}** molecules available from preprocessing.")
-
     # ── Settings ──
     _spl_c1, _spl_c2, _spl_c3, _spl_c4 = st.columns(4)
     with _spl_c1:
         _spl_method = st.radio("Split method", ["Scaffold", "Random", "Stratified random"],
-                                key="spl_method_radio", horizontal=False)
+                                key="spl_method_radio", horizontal=False,
+                                help="Scaffold: splits by Murcko scaffold so no chemotype appears in both sets (recommended for QSAR). "
+                                     "Random: standard shuffle. Stratified: preserves class balance across sets.")
     with _spl_c2:
-        _spl_test_size = st.slider("Test fraction", 0.1, 0.5, 0.2, 0.05, key="spl_test_size")
+        _spl_test_size = st.slider("Test fraction", 0.1, 0.5, 0.2, 0.05, key="spl_test_size",
+                                   help="Proportion of molecules to place in the test set. "
+                                        "0.2 (20%) is standard. Scaffold splits may deviate from this target.")
     with _spl_c3:
-        _spl_seed = st.number_input("Random seed", min_value=0, max_value=99999, value=42, key="spl_seed")
+        _spl_seed = st.number_input("Random seed", min_value=0, max_value=99999, value=42, key="spl_seed",
+                                    help="Controls reproducibility. Same seed + same data = same split.")
     with _spl_c4:
         _spl_labels = None
         _spl_label_col = None
@@ -2861,6 +3002,7 @@ if st.session_state["active_tab"] == "splitting":
             st.warning("Dataset too small to split (< 2 molecules). All molecules placed in training set.")
 
         # Summary table
+        render_provenance_caption()
         section_banner("Split Summary")
         _n_train = len(_spl_res["train_indices"])
         _n_test = len(_spl_res["test_indices"])
@@ -2921,8 +3063,9 @@ if st.session_state["active_tab"] == "splitting":
             _sc_fig.update_layout(
                 height=max(300, len(_sc_labels) * 25 + 80),
                 margin=dict(l=180, r=20, t=30, b=40),
-                xaxis_title="Number of molecules",
-                yaxis=dict(tickfont=dict(size=10)),
+                xaxis=dict(title=dict(text="Number of molecules", font=dict(size=13, color="#333")),
+                           tickfont=dict(color="#333")),
+                yaxis=dict(tickfont=dict(size=10, color="#333")),
                 paper_bgcolor="white", plot_bgcolor="white",
             )
             st.plotly_chart(_sc_fig, use_container_width=True)
@@ -2959,15 +3102,16 @@ if st.session_state["active_tab"] == "splitting":
                         hovertemplate="<b>%{text}</b><br>PC1=%{x:.2f}<br>PC2=%{y:.2f}<extra></extra>",
                     ))
                 fig.update_layout(
-                    title=dict(text=title, font=dict(size=13)),
-                    xaxis_title=f"PC1 ({vr[0]*100:.1f}% var.)",
-                    yaxis_title=f"PC2 ({vr[1]*100:.1f}% var.)",
+                    title=dict(text=title, font=dict(size=13, color="#333")),
+                    xaxis=dict(title=dict(text=f"PC1 ({vr[0]*100:.1f}% var.)", font=dict(size=13, color="#333")),
+                               tickfont=dict(color="#333"), gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                    yaxis=dict(title=dict(text=f"PC2 ({vr[1]*100:.1f}% var.)", font=dict(size=13, color="#333")),
+                               tickfont=dict(color="#333"), gridcolor="rgba(0,0,0,0.05)", zeroline=False),
                     width=450, height=400,
                     margin=dict(l=50, r=20, t=40, b=50),
                     paper_bgcolor="white", plot_bgcolor="white",
-                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)"),
-                    xaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
-                    yaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                    legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.8)",
+                                font=dict(color="#333")),
                 )
                 return fig
 
@@ -3002,13 +3146,12 @@ if st.session_state["active_tab"] == "splitting":
                     st.write("No test molecules (see warning above).")
 
         # Download buttons
-        _spl_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         _dl_b1, _dl_b2, _dl_b3 = st.columns(3)
         with _dl_b1:
             st.download_button(
                 "Download train set CSV",
                 data=_spl_res["train_df"].to_csv(index=False),
-                file_name=f"train_split_{_spl_ts}.csv",
+                file_name=timestamp_filename("split_train"),
                 mime="text/csv", key="spl_dl_train",
             )
         with _dl_b2:
@@ -3016,7 +3159,7 @@ if st.session_state["active_tab"] == "splitting":
                 st.download_button(
                     "Download test set CSV",
                     data=_spl_res["test_df"].to_csv(index=False),
-                    file_name=f"test_split_{_spl_ts}.csv",
+                    file_name=timestamp_filename("split_test"),
                     mime="text/csv", key="spl_dl_test",
                 )
         with _dl_b3:
@@ -3024,7 +3167,7 @@ if st.session_state["active_tab"] == "splitting":
             st.download_button(
                 "Download combined CSV",
                 data=_combined.to_csv(index=False),
-                file_name=f"split_combined_{_spl_ts}.csv",
+                file_name=timestamp_filename("split_combined"),
                 mime="text/csv", key="spl_dl_combined",
             )
 
@@ -3040,6 +3183,7 @@ if st.session_state["active_tab"] == "splitting":
 # TAB 7: Cluster Analysis
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "clustering":
+    render_dataset_status_bar()
 
     st.header("Cluster Analysis")
     st.write("Group molecules by fingerprint similarity to understand dataset structure, "
@@ -3051,20 +3195,17 @@ if st.session_state["active_tab"] == "clustering":
             return None
         return (smiles_list[0], smiles_list[-1], len(smiles_list))
 
-    # ── Check for preprocessed data ──
-    _cl_mols = st.session_state.get("kept_mols_for_featurization", [])
-    if not _cl_mols:
-        st.info("No preprocessed molecules available. Run the **Preprocessing** tab first, "
-                "or use the example data loader below.")
-        if st.button("Load FDA-approved drugs (20 molecules)", key="cl_load_fda"):
-            _fda_smi, _ = get_fda_approved_drugs()
-            _fda_mols = [Chem.MolFromSmiles(s) for s in _fda_smi]
-            _fda_mols = [m for m in _fda_mols if m is not None]
-            st.session_state["kept_mols_for_featurization"] = _fda_mols
-            st.rerun()
+    # ── Check for active dataset ──
+    _cl_ds = st.session_state.get("active_dataset")
+    if not _cl_ds:
+        render_empty_state(
+            "🔬",
+            "No active dataset. Preprocess molecules first to run cluster analysis.",
+        )
         st.stop()
 
-    _cl_smiles = [Chem.MolToSmiles(m) for m in _cl_mols]
+    _cl_mols = _cl_ds["mols"]
+    _cl_smiles = _cl_ds["smiles"]
     _cl_current_hash = _clust_data_hash(_cl_smiles)
 
     # Staleness: clear old results if the dataset changed
@@ -3074,32 +3215,37 @@ if st.session_state["active_tab"] == "clustering":
         st.warning("The preprocessed dataset has changed since the last clustering. Please re-run.")
     st.session_state["cluster_data_hash"] = _cl_current_hash
 
-    st.write(f"**{len(_cl_mols)}** molecules available from preprocessing.")
-
     # ── Settings ──
     _cl_c1, _cl_c2, _cl_c3, _cl_c4 = st.columns(4)
     with _cl_c1:
         _cl_method = st.radio("Clustering method", ["Butina", "Hierarchical"],
-                               key="cl_method_radio")
+                               key="cl_method_radio",
+                               help="Butina: distance-based, number of clusters emerges from the cutoff. "
+                                    "Hierarchical: specify the number of clusters (or auto-select via silhouette score).")
     with _cl_c2:
         _cl_fp_type = st.selectbox("Fingerprint", ["morgan", "fcfp", "maccs", "topological",
-                                    "atom_pair", "torsion", "avalon"], key="cl_fp_type")
+                                    "atom_pair", "torsion", "avalon"], key="cl_fp_type",
+                                    help="Fingerprint used to compute pairwise Tanimoto distances. Morgan is the most common choice.")
     with _cl_c3:
-        _cl_radius = st.number_input("Radius", min_value=1, max_value=4, value=2, key="cl_radius")
+        _cl_radius = st.number_input("Radius", min_value=1, max_value=4, value=2, key="cl_radius",
+                                     help="Circular fingerprint radius. Only applies to Morgan/FCFP. 2 (≈ECFP4) is standard.")
     with _cl_c4:
-        _cl_nbits = st.selectbox("Bits", [512, 1024, 2048], index=2, key="cl_nbits")
+        _cl_nbits = st.selectbox("Bits", [512, 1024, 2048], index=2, key="cl_nbits",
+                                 help="Fingerprint length. More bits = finer discrimination. 2048 is standard.")
 
     if _cl_method == "Butina":
         _cl_cutoff = st.slider("Distance cutoff", 0.1, 0.9, 0.4, 0.05, key="cl_cutoff",
                                 help="Lower cutoff = tighter clusters (higher similarity required). "
                                      "A cutoff of 0.4 means molecules need Tanimoto similarity >= 0.6 to cluster together.")
     else:
-        _cl_auto = st.checkbox("Auto-select number of clusters (silhouette score)", value=True, key="cl_auto_k")
+        _cl_auto = st.checkbox("Auto-select number of clusters (silhouette score)", value=True, key="cl_auto_k",
+                               help="When checked, the tool tries k=2..10 and picks the k with the highest silhouette score.")
         _cl_n_clusters = None
         if not _cl_auto:
             _cl_n_clusters = st.number_input("Number of clusters", min_value=2,
                                               max_value=min(50, len(_cl_mols)),
-                                              value=min(5, len(_cl_mols)), key="cl_n_clusters")
+                                              value=min(5, len(_cl_mols)), key="cl_n_clusters",
+                                              help="Fixed number of clusters to produce.")
 
     # Size warning
     if len(_cl_mols) > 5000:
@@ -3151,6 +3297,7 @@ if st.session_state["active_tab"] == "clustering":
         _cl_res = st.session_state["cluster_results"]
 
         # ── Cluster Summary ──
+        render_provenance_caption()
         section_banner("Cluster Summary")
         _cl_n = len(_cl_res["assignments"])
         _cl_nc = _cl_res["n_clusters"]
@@ -3199,9 +3346,11 @@ if st.session_state["active_tab"] == "clustering":
             _cs_fig.update_layout(
                 height=350,
                 margin=dict(l=50, r=20, t=30, b=60),
-                xaxis=dict(title="Cluster", tickangle=45 if _cl_nc > 10 else 0,
-                           tickfont=dict(size=10 if _cl_nc > 15 else 12)),
-                yaxis_title="Number of molecules",
+                xaxis=dict(title=dict(text="Cluster", font=dict(size=13, color="#333")),
+                           tickangle=45 if _cl_nc > 10 else 0,
+                           tickfont=dict(size=10 if _cl_nc > 15 else 12, color="#333")),
+                yaxis=dict(title=dict(text="Number of molecules", font=dict(size=13, color="#333")),
+                           tickfont=dict(color="#333")),
                 paper_bgcolor="white", plot_bgcolor="white",
             )
             st.plotly_chart(_cs_fig, use_container_width=True)
@@ -3283,15 +3432,15 @@ if st.session_state["active_tab"] == "clustering":
                 ))
 
             _cfig.update_layout(
-                xaxis_title=f"PC1 ({_cvr[0]*100:.1f}% var.)",
-                yaxis_title=f"PC2 ({_cvr[1]*100:.1f}% var.)",
+                xaxis=dict(title=dict(text=f"PC1 ({_cvr[0]*100:.1f}% var.)", font=dict(size=13, color="#333")),
+                           tickfont=dict(color="#333"), gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                yaxis=dict(title=dict(text=f"PC2 ({_cvr[1]*100:.1f}% var.)", font=dict(size=13, color="#333")),
+                           tickfont=dict(color="#333"), gridcolor="rgba(0,0,0,0.05)", zeroline=False),
                 height=500, width=700,
                 margin=dict(l=60, r=30, t=30, b=60),
                 paper_bgcolor="white", plot_bgcolor="white",
                 legend=dict(x=1.02, y=1, bgcolor="rgba(255,255,255,0.8)",
-                            font=dict(size=10)),
-                xaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
-                yaxis=dict(gridcolor="rgba(0,0,0,0.05)", zeroline=False),
+                            font=dict(size=10, color="#333")),
             )
             st.plotly_chart(_cfig, use_container_width=True)
             st.caption("Each point is a molecule projected into 2D chemical space via PCA on Morgan fingerprints. "
@@ -3306,17 +3455,17 @@ if st.session_state["active_tab"] == "clustering":
             "Number of diverse representatives to select",
             min_value=1, max_value=_cl_nc, value=_cl_max_div,
             key="cl_div_n",
+            help="Selects one medoid (most central molecule) from each of the N largest clusters.",
         )
         _cl_div_df = _cl_reps.head(_cl_div_n)[["Cluster_ID", "Size", "SMILES"]].copy()
         st.write(f"**{len(_cl_div_df)}** representative molecules selected (one medoid per cluster, "
                  f"from the {len(_cl_div_df)} largest clusters).")
         st.dataframe(_cl_div_df, use_container_width=True, hide_index=True)
 
-        _cl_ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.download_button(
             "Download diverse subset CSV",
             data=_cl_div_df.to_csv(index=False),
-            file_name=f"diverse_subset_{_cl_ts}.csv",
+            file_name=timestamp_filename("cluster_diverse_subset"),
             mime="text/csv", key="cl_dl_diverse",
         )
         st.caption("A diverse subset contains one representative molecule per cluster, maximizing "
@@ -3331,7 +3480,7 @@ if st.session_state["active_tab"] == "clustering":
         st.download_button(
             "Download full cluster assignments CSV",
             data=_cl_res["assignments"].to_csv(index=False),
-            file_name=f"cluster_assignments_{_cl_ts}.csv",
+            file_name=timestamp_filename("cluster_assignments"),
             mime="text/csv", key="cl_dl_full",
         )
 

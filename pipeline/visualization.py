@@ -40,16 +40,17 @@ def _point_in_ellipse(x, y, cx, cy, a, b):
     return ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 <= 1.0
 
 
-def plot_boiled_egg(mols_df, label_col=None):
+def plot_boiled_egg(mols_df, label_col=None, draw_molecules=True):
     """
     Create a BOILED-Egg diagram (Daina & Zoete, 2016) using Plotly.
 
     Parameters:
         mols_df (DataFrame): must contain 'WLOGP' and 'TPSA' columns, and 'SMILES'
         label_col (str|None): column with activity labels (Active/Intermediate/Inactive)
+        draw_molecules (bool): if False, draw only the egg ellipses (no molecule dots)
 
     Returns:
-        tuple: (plotly Figure, n_gi, n_bbb, result_df)
+        tuple: (plotly Figure, n_gi, n_bbb, result_df, sampled)
     """
     import plotly.graph_objects as go
 
@@ -100,40 +101,41 @@ def plot_boiled_egg(mols_df, label_col=None):
     ))
 
     # Molecule dots — added after ellipses so they render on top
-    has_labels = label_col and label_col in plot_df.columns and plot_df[label_col].notna().any()
-    if has_labels:
-        class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e", "Inactive": "#d62728"}
-        for cls in ["Active", "Intermediate", "Inactive"]:
-            subset = plot_df[plot_df[label_col] == cls]
-            if len(subset) == 0:
-                continue
+    if draw_molecules:
+        has_labels = label_col and label_col in plot_df.columns and plot_df[label_col].notna().any()
+        if has_labels:
+            class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e", "Inactive": "#d62728"}
+            for cls in ["Active", "Intermediate", "Inactive"]:
+                subset = plot_df[plot_df[label_col] == cls]
+                if len(subset) == 0:
+                    continue
+                fig.add_trace(go.Scatter(
+                    x=subset["TPSA"], y=subset["WLOGP"],
+                    mode="markers",
+                    marker=dict(size=10, color=class_colors[cls], opacity=0.85),
+                    name=cls,
+                    text=subset["SMILES"],
+                    hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+                ))
+            unlabeled = plot_df[plot_df[label_col].isna()]
+            if len(unlabeled) > 0:
+                fig.add_trace(go.Scatter(
+                    x=unlabeled["TPSA"], y=unlabeled["WLOGP"],
+                    mode="markers",
+                    marker=dict(size=10, color="#555555", opacity=0.85),
+                    name="Unlabeled",
+                    text=unlabeled["SMILES"],
+                    hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
+                ))
+        else:
             fig.add_trace(go.Scatter(
-                x=subset["TPSA"], y=subset["WLOGP"],
-                mode="markers",
-                marker=dict(size=10, color=class_colors[cls], opacity=0.85),
-                name=cls,
-                text=subset["SMILES"],
-                hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
-            ))
-        unlabeled = plot_df[plot_df[label_col].isna()]
-        if len(unlabeled) > 0:
-            fig.add_trace(go.Scatter(
-                x=unlabeled["TPSA"], y=unlabeled["WLOGP"],
+                x=plot_df["TPSA"], y=plot_df["WLOGP"],
                 mode="markers",
                 marker=dict(size=10, color="#555555", opacity=0.85),
-                name="Unlabeled",
-                text=unlabeled["SMILES"],
+                name="Molecules",
+                text=plot_df["SMILES"],
                 hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
             ))
-    else:
-        fig.add_trace(go.Scatter(
-            x=plot_df["TPSA"], y=plot_df["WLOGP"],
-            mode="markers",
-            marker=dict(size=10, color="#555555", opacity=0.85),
-            name="Molecules",
-            text=plot_df["SMILES"],
-            hovertemplate="<b>%{text}</b><br>TPSA=%{x:.1f}<br>WLOGP=%{y:.2f}<extra></extra>",
-        ))
 
     fig.update_layout(
         paper_bgcolor='white',
