@@ -5,6 +5,7 @@ All functions render Streamlit widgets directly. No computational logic lives he
 """
 
 import streamlit as st
+from io import BytesIO
 from datetime import datetime
 
 # ── Version (single source of truth) ──────────────────────────────────────────
@@ -15,6 +16,142 @@ def timestamp_filename(prefix, extension="csv"):
     """Generate a download filename: <prefix>_<yyyymmdd_hhmmss>.<ext>"""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     return f"{prefix}_{ts}.{extension}"
+
+
+def _format_relative_time(loaded_at):
+    """Format a loaded_at ISO timestamp as a human-readable relative time."""
+    if not loaded_at or loaded_at == "Unknown (migrated)":
+        return "unknown time"
+    try:
+        dt = datetime.fromisoformat(loaded_at)
+        delta = datetime.now() - dt
+        if delta.total_seconds() < 60:
+            return "just now"
+        elif delta.total_seconds() < 3600:
+            return f"{int(delta.total_seconds() // 60)} min ago"
+        elif delta.total_seconds() < 86400:
+            return f"{int(delta.total_seconds() // 3600)}h ago"
+        else:
+            return dt.strftime("%Y-%m-%d %H:%M")
+    except (ValueError, TypeError):
+        return str(loaded_at)
+
+
+def _format_filter_list(config):
+    """Build a list of applied filter names from a preprocessing config dict."""
+    filters = []
+    if config.get("lipinski_max_violations") is not None:
+        filters.append(f"Lipinski (max {config['lipinski_max_violations']} violations)")
+    filters.append("PAINS")  # always on
+    for f in ["Veber", "Ghose", "Egan", "Muegge", "Brenk"]:
+        if config.get(f"enable_{f.lower()}"):
+            filters.append(f)
+    return filters
+
+
+def render_sidebar_data_panel():
+    """Persistent sidebar showing dataset state + data loading controls."""
+    from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set
+
+    ds = st.session_state.get("active_dataset")
+    has_staged_file = "sidebar_staged_file" in st.session_state
+    has_staged_smiles = bool(st.session_state.get("pasted_smiles", "").strip())
+
+    # ── Dataset status ──
+    if ds is not None:
+        st.sidebar.markdown("### Active Dataset")
+        filename = ds.get("source_filename", "Unknown")
+        n_mols = ds.get("n_molecules", 0)
+        n_orig = ds.get("n_original", 0)
+        time_str = _format_relative_time(ds.get("loaded_at"))
+        config = ds.get("preprocessing_config", {})
+        filters = _format_filter_list(config)
+
+        st.sidebar.markdown(
+            f"**{filename}**\n\n"
+            f"{n_mols:,} molecules (from {n_orig:,} input)\n\n"
+            f"Preprocessed {time_str}\n\n"
+            f"Filters: {', '.join(filters)}"
+        )
+        if st.sidebar.button("Clear dataset", key="sidebar_clear_ds"):
+            for k in ["active_dataset", "kept_mols_for_featurization",
+                       "kept_smiles_for_featurization", "pipeline_result",
+                       "pipeline_settings", "pipeline_ts",
+                       "split_results", "split_data_hash", "split_pca_current",
+                       "split_pca_random", "cluster_results", "cluster_data_hash",
+                       "cluster_pca", "scr_results", "featurization_result",
+                       "sidebar_staged_file", "pasted_smiles"]:
+                st.session_state.pop(k, None)
+            st.rerun()
+    elif has_staged_file or has_staged_smiles:
+        st.sidebar.warning("Data staged — go to Preprocessing to configure filters and run pipeline.")
+    else:
+        st.sidebar.info("No dataset loaded yet.")
+
+    # ── Load / change data expander ──
+    with st.sidebar.expander("Load / change data"):
+        # File uploader
+        sidebar_file = st.file_uploader(
+            "Upload file", type=["txt", "csv", "xlsx"],
+            key="sidebar_file_uploader",
+        )
+        if sidebar_file is not None:
+            file_bytes = sidebar_file.read()
+            sidebar_file.seek(0)
+            if (st.session_state.get("sidebar_staged_file", {}).get("name") != sidebar_file.name):
+                st.session_state["sidebar_staged_file"] = {
+                    "name": sidebar_file.name,
+                    "bytes": file_bytes,
+                }
+                st.rerun()
+
+        # Example dataset
+        st.markdown("---")
+        _SIDEBAR_EXAMPLES = {
+            "FDA-approved drugs (20 molecules)": get_fda_approved_drugs,
+            "PAINS-rich demo set (15 molecules)": get_pains_demo_set,
+        }
+        sidebar_example = st.selectbox(
+            "Example dataset",
+            list(_SIDEBAR_EXAMPLES.keys()),
+            key="sidebar_example_select",
+            label_visibility="collapsed",
+        )
+        if st.button("Load example", key="sidebar_load_example"):
+            smiles_list, _ = _SIDEBAR_EXAMPLES[sidebar_example]()
+            st.session_state["pasted_smiles"] = "\n".join(smiles_list)
+            st.session_state["_example_source"] = sidebar_example
+            st.rerun()
+
+        # Paste SMILES
+        st.markdown("---")
+        sidebar_smiles = st.text_area(
+            "Paste SMILES (one per line)",
+            key="sidebar_paste_smiles",
+            height=100,
+        )
+        if st.button("Stage SMILES", key="sidebar_stage_smiles"):
+            if sidebar_smiles.strip():
+                st.session_state["pasted_smiles"] = sidebar_smiles.strip()
+                st.rerun()
+
+    # ── Citation ──
+    with st.sidebar.expander("Cite this tool"):
+        st.code(
+            f"""@software{{qsar_preprocessing_tool,
+  author = {{Papular108}},
+  title = {{QSAR Preprocessing Tool: An open-source cheminformatics platform}},
+  url = {{https://github.com/Papular108/qsar-preprocessing-tool}},
+  year = {{2026}},
+  version = {{{VERSION}}}
+}}""",
+            language="bibtex",
+        )
+
+    # ── Resources ──
+    st.sidebar.markdown("##### Resources")
+    st.sidebar.page_link("pages/1_📖_About_Methodology.py", label="📖 Methodology")
+    st.sidebar.page_link("pages/2_❓_FAQ_Limitations.py", label="❓ FAQ & Limitations")
 
 
 def render_dataset_status_bar():
@@ -33,23 +170,7 @@ def render_dataset_status_bar():
         )
         return False  # caller can use this to short-circuit
 
-    loaded_at = ds.get("loaded_at", "Unknown")
-    if loaded_at and loaded_at != "Unknown (migrated)":
-        try:
-            dt = datetime.fromisoformat(loaded_at)
-            delta = datetime.now() - dt
-            if delta.total_seconds() < 60:
-                time_str = "just now"
-            elif delta.total_seconds() < 3600:
-                time_str = f"{int(delta.total_seconds() // 60)} min ago"
-            elif delta.total_seconds() < 86400:
-                time_str = f"{int(delta.total_seconds() // 3600)}h ago"
-            else:
-                time_str = dt.strftime("%Y-%m-%d %H:%M")
-        except (ValueError, TypeError):
-            time_str = str(loaded_at)
-    else:
-        time_str = "unknown time"
+    time_str = _format_relative_time(ds.get("loaded_at", "Unknown"))
 
     filename = ds.get("source_filename", "Unknown")
     n_mols = ds.get("n_molecules", 0)
@@ -72,14 +193,7 @@ def render_dataset_status_bar():
         st.markdown(f"**Input molecules:** {n_orig:,}")
         st.markdown(f"**After preprocessing:** {n_mols:,}")
         if config:
-            filters = []
-            if config.get("lipinski_max_violations") is not None:
-                filters.append(f"Lipinski (max {config['lipinski_max_violations']} violations)")
-            filters.append("PAINS")  # always on
-            for f in ["Veber", "Ghose", "Egan", "Muegge", "Brenk"]:
-                key = f"enable_{f.lower()}"
-                if config.get(key):
-                    filters.append(f)
+            filters = _format_filter_list(config)
             st.markdown(f"**Filters applied:** {', '.join(filters)}")
             dedup = config.get("deduplication", "canonical_smiles")
             st.markdown(f"**Deduplication:** {dedup}")

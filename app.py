@@ -4,6 +4,7 @@ st.set_page_config(page_title="QSAR Preprocessing Tool", page_icon="🧪", layou
 
 import sys
 import pandas as pd
+from io import BytesIO
 from datetime import datetime
 from rdkit import rdBase, Chem
 from rdkit.Chem import Descriptors, rdMolDescriptors, RDConfig
@@ -25,11 +26,11 @@ import altair as alt
 from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
 from pipeline.methodology import generate_methods_text
 from pipeline.pains_catalog import get_pains_explanation, get_brenk_explanation
-from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_dpp4_inhibitors, get_common_analgesics
+from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_common_analgesics
 from pipeline.ui_components import (
     VERSION, timestamp_filename, render_dataset_status_bar, render_empty_state,
     render_provenance_caption, render_next_step_hint, render_footer,
-    migrate_legacy_session_state,
+    migrate_legacy_session_state, render_sidebar_data_panel,
 )
 from sklearn.preprocessing import StandardScaler
 from sklearn.decomposition import PCA
@@ -180,6 +181,13 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
+    /* ── Suppress Streamlit auto page-nav ── */
+    [data-testid="stSidebarNav"] { display: none !important; }
+    [data-testid="stSidebarNavItems"] { display: none !important; }
+    nav[data-testid="stSidebarNav"] { display: none !important; }
+    /* ── Widen sidebar ── */
+    section[data-testid="stSidebar"] { min-width: 320px !important; max-width: 320px !important; }
+    section[data-testid="stSidebar"] > div { min-width: 320px !important; max-width: 320px !important; }
     /* ── Category buttons (level 1) ── */
     [data-testid="stVerticalBlockBorderWrapper"]:has(> div > [data-testid="nav_categories"])
         [data-testid="stButton"] > button {
@@ -231,7 +239,6 @@ st.markdown(
 )
 
 st.title("QSAR Preprocessing Tool")
-st.write("Welcome! This tool helps preprocess and featurize molecules for QSAR/virtual screening workflows.")
 
 # ── Two-level navigation: categories → tabs ──
 _NAV_STRUCTURE = {
@@ -281,6 +288,9 @@ if "active_tab" not in st.session_state:
 # Migrate legacy session state → active_dataset (one-time, idempotent)
 migrate_legacy_session_state()
 
+# Persistent sidebar data panel (visible on all tabs)
+render_sidebar_data_panel()
+
 # Defensive: ensure active_tab belongs to active_category
 if _TAB_TO_CATEGORY.get(st.session_state["active_tab"]) != st.session_state["active_category"]:
     st.session_state["active_tab"] = _NAV_STRUCTURE[st.session_state["active_category"]]["tabs"][0][0]
@@ -329,50 +339,54 @@ st.divider()
 if st.session_state["active_tab"] == "preprocessing":
 
     st.header("Batch preprocessing")
-    st.write("Upload a file with one SMILES string per line, or paste them below.")
 
-    # ── Landing card for first-time visitors ──────────────────────────────────
-    if "active_dataset" not in st.session_state and "pipeline_result" not in st.session_state:
+    if "pasted_smiles" not in st.session_state:
+        st.session_state["pasted_smiles"] = ""
+
+    # ── Detect sidebar-staged data ──
+    _sidebar_file = st.session_state.get("sidebar_staged_file", None)
+    uploaded_file = None
+    pasted_smiles = st.session_state.get("pasted_smiles", "")
+
+    _has_data = (
+        "active_dataset" in st.session_state
+        or _sidebar_file is not None
+        or pasted_smiles.strip()
+    )
+
+    # ── Landing card / empty state ────────────────────────────────────────────
+    if not _has_data and "pipeline_result" not in st.session_state:
         st.markdown(
             '<div style="background:linear-gradient(135deg,#f8f9fa,#e9ecef);border-radius:12px;'
             'padding:32px;margin-bottom:24px;border:1px solid #dee2e6;">'
-            '<h3 style="margin-top:0;color:#1a1a2e;">Welcome to the QSAR Preprocessing Tool</h3>'
-            '<p style="color:#495057;font-size:1rem;margin-bottom:20px;">'
-            'Clean, filter, and featurize molecular datasets for QSAR modeling and virtual screening. '
-            'Upload your own data or start with an example dataset.</p>'
+            '<p style="color:#495057;font-size:1.05rem;margin-top:0;margin-bottom:20px;">'
+            'A free, open-source cheminformatics platform for QSAR data preparation. '
+            'Clean and filter ChEMBL/PubChem datasets, explore chemical space, generate '
+            'reproducible train/test splits and clusters, and export publication-ready '
+            'methods. No installation, no API keys — works in your browser.</p>'
             '<p style="color:#6c757d;font-size:0.95rem;margin-bottom:4px;"><strong>Quick start:</strong></p>'
             '<ol style="color:#6c757d;font-size:0.95rem;margin-top:0;">'
-            '<li><strong>Upload</strong> a CSV/TXT with SMILES, or load an example dataset below</li>'
+            '<li><strong>Upload</strong> a CSV/TXT with SMILES using the sidebar, or load an example dataset</li>'
             '<li><strong>Preprocess</strong> — standardize, filter (Lipinski, PAINS, etc.), deduplicate</li>'
             '<li><strong>Analyze</strong> — explore molecules, cluster, split for modeling</li></ol>'
             '</div>',
             unsafe_allow_html=True,
         )
-
-    if "pasted_smiles" not in st.session_state:
-        st.session_state["pasted_smiles"] = ""
-
-    with st.expander("Try with example data", expanded="active_dataset" not in st.session_state and "pipeline_result" not in st.session_state):
-        _EXAMPLE_OPTIONS = {
-            "FDA-approved drugs (20 molecules)": get_fda_approved_drugs,
-            "PAINS-rich demo set (15 molecules)": get_pains_demo_set,
-        }
-        example_choice = st.selectbox(
-            "Select a dataset",
-            list(_EXAMPLE_OPTIONS.keys()),
-            label_visibility="collapsed",
+        st.markdown(
+            '<div style="text-align:center;padding:40px 20px;color:#999;">'
+            '<div style="font-size:3rem;margin-bottom:12px;">📂</div>'
+            '<p style="font-size:1rem;color:#666;">No data loaded. Use the sidebar to upload a file, '
+            'load an example dataset, or paste SMILES.</p></div>',
+            unsafe_allow_html=True,
         )
-        smiles_list_ex, description_ex = _EXAMPLE_OPTIONS[example_choice]()
-        st.caption(description_ex)
-        if st.button("Load example data"):
-            st.session_state["pasted_smiles"] = "\n".join(smiles_list_ex)
-            st.session_state["_example_source"] = example_choice
-            st.rerun()
 
-    uploaded_file = st.file_uploader("Upload a .txt, .csv, or .xlsx file with SMILES", type=["txt", "csv", "xlsx"])
+    if _sidebar_file is not None:
+        uploaded_file = BytesIO(_sidebar_file["bytes"])
+        uploaded_file.name = _sidebar_file["name"]
+        st.info(f"File **{_sidebar_file['name']}** loaded from sidebar. Configure filters below and click Run Pipeline.")
+
     if uploaded_file is not None:
         st.session_state.pop("_example_source", None)
-    pasted_smiles = st.text_area("Or paste SMILES here (one per line)", key="pasted_smiles")
 
     # ── Early parse of uploaded CSV/XLSX for column detection ────────────────────
     _uploaded_df = None
@@ -951,6 +965,9 @@ if st.session_state["active_tab"] == "preprocessing":
                                "split_pca_random", "cluster_results", "cluster_data_hash",
                                "cluster_pca", "scr_results", "featurization_result"):
                 st.session_state.pop(_stale_key, None)
+            # Clear raw staged data — it now lives in active_dataset
+            st.session_state.pop("pasted_smiles", None)
+            st.session_state.pop("sidebar_staged_file", None)
             # Clear next-step hint dismissals so they re-appear for new data
             for _hk in list(st.session_state):
                 if _hk.startswith("hint_dismissed_"):
@@ -1581,8 +1598,6 @@ if st.session_state["active_tab"] == "preprocessing":
 # TAB 2: Molecule Explorer
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "explorer":
-    render_dataset_status_bar()
-
     st.header("Molecule Explorer")
     st.write("Enter one or more SMILES strings to see a full physicochemical and druglikeness profile. "
              "Optionally add a name after each SMILES, separated by a space or tab.")
@@ -2052,7 +2067,6 @@ if st.session_state["active_tab"] == "explorer":
         # Quick-load buttons
         _SIM_REF_PRESETS = {
             "FDA-approved drugs": get_fda_approved_drugs,
-            "DPP-4 inhibitors": get_dpp4_inhibitors,
         }
         _sim_preset_cols = st.columns(len(_SIM_REF_PRESETS))
         for _pc, (_pname, _pfunc) in zip(_sim_preset_cols, _SIM_REF_PRESETS.items()):
@@ -2329,8 +2343,6 @@ if st.session_state["active_tab"] == "explorer":
 # TAB 3: Filter Comparison
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "comparison":
-    render_dataset_status_bar()
-
     st.header("Filter Comparison")
     st.write(
         "Run the preprocessing pipeline with two different filter configurations on the same "
@@ -2498,8 +2510,6 @@ if st.session_state["active_tab"] == "comparison":
 # TAB 4: Molecule Converter
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "converter":
-    render_dataset_status_bar()
-
     st.header("Molecule Converter")
     st.write(
         "Convert between SMILES, InChI, InChIKey, and molecular formula. "
@@ -2647,8 +2657,6 @@ if st.session_state["active_tab"] == "converter":
 # TAB 5: Similarity Screening
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "screening":
-    render_dataset_status_bar()
-
     st.header("Multi-Reference Similarity Screening")
     st.write("Compare a set of reference molecules against a target dataset to find similar compounds using Tanimoto similarity.")
 
@@ -2898,8 +2906,6 @@ if st.session_state["active_tab"] == "screening":
 # TAB 6: Train/Test Split
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "splitting":
-    render_dataset_status_bar()
-
     st.header("Train/Test Split")
     st.write("Generate realistic train/test splits for downstream QSAR modeling. "
              "Scaffold splitting ensures no Murcko scaffold appears in both sets, "
@@ -3194,8 +3200,6 @@ if st.session_state["active_tab"] == "splitting":
 # TAB 7: Cluster Analysis
 # ══════════════════════════════════════════════════════════════════════════════
 if st.session_state["active_tab"] == "clustering":
-    render_dataset_status_bar()
-
     st.header("Cluster Analysis")
     st.write("Group molecules by fingerprint similarity to understand dataset structure, "
              "identify overrepresented chemical series, and select diverse subsets.")
