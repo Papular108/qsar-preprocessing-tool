@@ -181,6 +181,10 @@ def build_metadata_block(settings):
 
 st.markdown(
     """<style>
+    /* ── Darken st.metric text ── */
+    [data-testid="stMetricValue"] { color: #1a1a2e !important; }
+    [data-testid="stMetricLabel"] { color: #333 !important; }
+    [data-testid="stMetricDelta"] { color: #666 !important; }
     /* ── Suppress Streamlit auto page-nav ── */
     [data-testid="stSidebarNav"] { display: none !important; }
     [data-testid="stSidebarNavItems"] { display: none !important; }
@@ -1495,69 +1499,69 @@ if st.session_state["active_tab"] == "preprocessing":
         feat_errors = _fr["feat_errors"]
         _feat_ts = _fr["ts"]
 
-        section_banner("Featurized Data")
-        st.write(f"Shape: {feature_df.shape}")
-        st.dataframe(feature_df.head(20))
+        with st.expander("Featurized Data", expanded=False):
+            st.write(f"Shape: {feature_df.shape}")
+            st.dataframe(feature_df.head(20))
 
-        if feat_errors:
-            st.warning(f"{len(feat_errors)} molecules failed featurization.")
-            st.dataframe(pd.DataFrame(feat_errors))
+            if feat_errors:
+                st.warning(f"{len(feat_errors)} molecules failed featurization.")
+                st.dataframe(pd.DataFrame(feat_errors))
 
-        feat_metadata = build_metadata_block({
-            "Fingerprint type": _fr["fp_type"],
-            "Fingerprint bits": _fr["n_bits"],
-            "Morgan radius": _fr["radius"],
-            "Molecule count": feature_df.shape[0],
-            "Feature column count": feature_df.shape[1],
-        })
-        csv_data = feat_metadata + feature_df.to_csv(index=False)
-        st.download_button(
-            "Download all featurized data as CSV",
-            data=csv_data,
-            file_name=f"featurized_data_{_feat_ts}.csv",
-            mime="text/csv",
-        )
+            feat_metadata = build_metadata_block({
+                "Fingerprint type": _fr["fp_type"],
+                "Fingerprint bits": _fr["n_bits"],
+                "Morgan radius": _fr["radius"],
+                "Molecule count": feature_df.shape[0],
+                "Feature column count": feature_df.shape[1],
+            })
+            csv_data = feat_metadata + feature_df.to_csv(index=False)
+            st.download_button(
+                "Download all featurized data as CSV",
+                data=csv_data,
+                file_name=f"featurized_data_{_feat_ts}.csv",
+                mime="text/csv",
+            )
 
-        # Activity-aware downloads and preview
-        _pl_label_map_feat = st.session_state.get("pipeline_label_map", {})
-        _feat_smiles = list(st.session_state.get("kept_smiles_for_featurization", []))
-        _feat_labels = [_pl_label_map_feat.get(s) for s in _feat_smiles]
-        _has_feat_labels = any(l is not None for l in _feat_labels)
+            # Activity-aware downloads and preview
+            _pl_label_map_feat = st.session_state.get("pipeline_label_map", {})
+            _feat_smiles = list(st.session_state.get("kept_smiles_for_featurization", []))
+            _feat_labels = [_pl_label_map_feat.get(s) for s in _feat_smiles]
+            _has_feat_labels = any(l is not None for l in _feat_labels)
 
-        if _has_feat_labels:
-            _feat_df_with_label = feature_df.copy()
-            _feat_df_with_label.insert(0, "_Activity_Label", _feat_labels)
+            if _has_feat_labels:
+                _feat_df_with_label = feature_df.copy()
+                _feat_df_with_label.insert(0, "_Activity_Label", _feat_labels)
 
-            _class_order = ["Active", "Intermediate", "Inactive"]
-            _present_classes = [c for c in _class_order if c in _feat_labels]
+                _class_order = ["Active", "Intermediate", "Inactive"]
+                _present_classes = [c for c in _class_order if c in _feat_labels]
 
-            st.write("**Download by activity class:**")
-            _dl_cols = st.columns(len(_present_classes))
-            for _di, _cls in enumerate(_present_classes):
-                _subset = _feat_df_with_label[
-                    _feat_df_with_label["_Activity_Label"] == _cls
-                ].drop(columns=["_Activity_Label"])
-                _dl_cols[_di].download_button(
-                    f"Download {_cls} ({len(_subset)})",
-                    data=_subset.to_csv(index=False),
-                    file_name=f"featurized_{_cls.lower()}_{_feat_ts}.csv",
-                    mime="text/csv",
-                    key=f"dl_feat_{_cls}",
-                )
+                st.write("**Download by activity class:**")
+                _dl_cols = st.columns(len(_present_classes))
+                for _di, _cls in enumerate(_present_classes):
+                    _subset = _feat_df_with_label[
+                        _feat_df_with_label["_Activity_Label"] == _cls
+                    ].drop(columns=["_Activity_Label"])
+                    _dl_cols[_di].download_button(
+                        f"Download {_cls} ({len(_subset)})",
+                        data=_subset.to_csv(index=False),
+                        file_name=f"featurized_{_cls.lower()}_{_feat_ts}.csv",
+                        mime="text/csv",
+                        key=f"dl_feat_{_cls}",
+                    )
 
-            with st.expander("View by activity class"):
-                _tab_names = ["All"] + _present_classes
-                _tabs = st.tabs(_tab_names)
-                with _tabs[0]:
-                    st.write(f"{len(feature_df)} molecules")
-                    st.dataframe(feature_df.head(10))
-                for _ti, _cls in enumerate(_present_classes):
-                    with _tabs[_ti + 1]:
-                        _sub = _feat_df_with_label[
-                            _feat_df_with_label["_Activity_Label"] == _cls
-                        ].drop(columns=["_Activity_Label"])
-                        st.write(f"{len(_sub)} molecules")
-                        st.dataframe(_sub.head(10))
+                with st.expander("View by activity class"):
+                    _tab_names = ["All"] + _present_classes
+                    _tabs = st.tabs(_tab_names)
+                    with _tabs[0]:
+                        st.write(f"{len(feature_df)} molecules")
+                        st.dataframe(feature_df.head(10))
+                    for _ti, _cls in enumerate(_present_classes):
+                        with _tabs[_ti + 1]:
+                            _sub = _feat_df_with_label[
+                                _feat_df_with_label["_Activity_Label"] == _cls
+                            ].drop(columns=["_Activity_Label"])
+                            st.write(f"{len(_sub)} molecules")
+                            st.dataframe(_sub.head(10))
 
     section_banner("Generate Methods Section")
     st.write("Generate a publication-ready paragraph describing the preprocessing and featurization steps you used.")
