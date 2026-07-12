@@ -1,6 +1,6 @@
 import streamlit as st
 
-st.set_page_config(page_title="QSAR Preprocessing Tool", page_icon="🧪", layout="wide")
+st.set_page_config(page_title="QSAR Preprocessing Tool", page_icon="🧪", layout="wide", initial_sidebar_state="expanded")
 
 import sys
 import pandas as pd
