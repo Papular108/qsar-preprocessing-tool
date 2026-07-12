@@ -217,6 +217,13 @@ class TestRandomSplit:
         assert "Label" in result["train_df"].columns
         assert "Label" in result["test_df"].columns
 
+    def test_stratified_with_none_labels_raises(self):
+        smi_list = [ASPIRIN, IBUPROFEN, NAPROXEN, ACETAMINOPHEN, CAFFEINE]
+        mols, canon = _mols_and_smiles(smi_list)
+        labels = ["Active", None, "Inactive", "Active", None]
+        with pytest.raises(ValueError, match="None"):
+            random_split(mols, canon, labels=labels, stratify=True)
+
     def test_too_small(self):
         mols, canon = _mols_and_smiles([ASPIRIN])
         result = random_split(mols, canon, test_size=0.2)

@@ -21,6 +21,7 @@ from pipeline.preprocessing import (
     compute_synthetic_accessibility,
     deduplicate_molecules,
     run_preprocessing_pipeline,
+    labels_to_targets,
 )
 
 # ---------------------------------------------------------------------------
@@ -488,3 +489,34 @@ class TestRunPreprocessingPipeline:
         lenient = run_preprocessing_pipeline([SORBITOL, IBUPROFEN], lipinski_max_violations=1)
         assert len(strict["kept_smiles"])  == 1   # sorbitol removed
         assert len(lenient["kept_smiles"]) == 2   # both pass
+
+
+# ---------------------------------------------------------------------------
+# labels_to_targets
+# ---------------------------------------------------------------------------
+class TestLabelsToTargets:
+    def test_2class_basic(self):
+        assert labels_to_targets(["Active", "Inactive", "Active"]) == [1, 0, 1]
+
+    def test_3class_basic(self):
+        result = labels_to_targets(
+            ["Active", "Intermediate", "Inactive"], use_3class=True
+        )
+        assert result == [2, 1, 0]
+
+    def test_none_labels(self):
+        assert labels_to_targets(["Active", None, "Inactive"]) == [1, None, 0]
+
+    def test_empty_list(self):
+        assert labels_to_targets([]) == []
+
+    def test_all_same_class(self):
+        assert labels_to_targets(["Active", "Active"]) == [1, 1]
+        assert labels_to_targets(["Active", "Active"], use_3class=True) == [2, 2]
+
+    def test_3class_with_only_2_present(self):
+        result = labels_to_targets(["Active", "Inactive"], use_3class=True)
+        assert result == [2, 0]
+
+    def test_unknown_label(self):
+        assert labels_to_targets(["Active", "Unknown"]) == [1, None]

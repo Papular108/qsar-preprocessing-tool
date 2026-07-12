@@ -15,7 +15,7 @@ try:
 except Exception:
     sascorer = None
 from pipeline.preprocessing import (
-    run_preprocessing_pipeline, label_activity, clean_dataset,
+    run_preprocessing_pipeline, label_activity, labels_to_targets, clean_dataset,
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
     check_pains, check_brenk, compute_qed, analyze_scaffolds,
 )
@@ -598,6 +598,8 @@ if st.session_state["active_tab"] == "preprocessing":
     # ── Activity Labeling (CSV/XLSX only) ────────────────────────────────────────
     _activity_label_map = {}
     _activity_pval_map = {}
+    _task_type_selection = "None"
+    _use_3class = False
 
     if _uploaded_df is not None:
         with st.expander("Activity Labeling (optional)", expanded=False):
@@ -609,256 +611,298 @@ if st.session_state["active_tab"] == "preprocessing":
             if not _numeric_cols:
                 st.info("No numeric columns found in the uploaded file for activity labeling.")
             else:
-                _act_keywords = ["ic50", "ki", "ec50", "kd", "activity", "potency", "standard_value"]
-                _auto_act_col = next(
-                    (c for c in _numeric_cols if any(kw in c.lower() for kw in _act_keywords)),
-                    None,
+                _task_type_selection = st.radio(
+                    "Task type",
+                    ["None", "Classification", "Regression"],
+                    horizontal=True,
+                    help="Classification: predict categories (Active/Inactive). "
+                         "Regression: predict continuous activity values. "
+                         "None: skip activity labeling.",
                 )
-                _act_default_idx = _numeric_cols.index(_auto_act_col) if _auto_act_col else 0
 
-                _la_c1, _la_c2 = st.columns(2)
-                with _la_c1:
-                    _act_col = st.selectbox("Activity column", _numeric_cols, index=_act_default_idx)
-                    _act_type = st.selectbox(
-                        "Activity type", ["IC50", "Ki", "EC50", "Kd"],
-                        help="Select the measurement type.",
+                if _task_type_selection != "None":
+                    _act_keywords = ["ic50", "ki", "ec50", "kd", "activity", "potency", "standard_value"]
+                    _auto_act_col = next(
+                        (c for c in _numeric_cols if any(kw in c.lower() for kw in _act_keywords)),
+                        None,
                     )
-                with _la_c2:
-                    # Auto-detect log-scale columns
-                    _log_keywords = ["pchembl", "pic50", "pki", "pec50", "pkd", "pactivity"]
-                    _auto_log = (
-                        _act_col.lower().startswith("p")
-                        or any(kw in _act_col.lower() for kw in _log_keywords)
-                    )
-                    _is_log_scale = st.checkbox(
-                        "Values are already on −log₁₀ scale (e.g. pIC50, pKi, pchembl_value)",
-                        value=_auto_log,
-                        help="Check this if your column contains pIC50/pKi/pchembl values "
-                             "where higher = more potent. Leave unchecked for raw nM values "
-                             "where lower = more potent.",
-                    )
+                    _act_default_idx = _numeric_cols.index(_auto_act_col) if _auto_act_col else 0
 
-                # Threshold inputs adapt to scale
-                if _is_log_scale:
-                    _unit_label = ""  # unitless
-                    _scale_note = "Values on −log₁₀ scale (higher = more potent)."
-                    _thr_col1, _thr_col2 = st.columns(2)
-                    with _thr_col1:
-                        _thr_active = st.number_input(
-                            "Active threshold (−log₁₀)", value=7.0, min_value=0.0,
-                            step=0.5, format="%.1f",
-                            help="Molecules with pActivity ≥ this value are labeled 'Active'.",
+                    _la_c1, _la_c2 = st.columns(2)
+                    with _la_c1:
+                        _act_col = st.selectbox("Activity column", _numeric_cols, index=_act_default_idx)
+                        if _task_type_selection == "Classification":
+                            _act_type = st.selectbox(
+                                "Activity type", ["IC50", "Ki", "EC50", "Kd"],
+                                help="Select the measurement type.",
+                            )
+                        else:
+                            _act_type = "IC50"  # placeholder, not used for regression display
+                    with _la_c2:
+                        # Auto-detect log-scale columns
+                        _log_keywords = ["pchembl", "pic50", "pki", "pec50", "pkd", "pactivity"]
+                        _auto_log = (
+                            _act_col.lower().startswith("p")
+                            or any(kw in _act_col.lower() for kw in _log_keywords)
                         )
-                    with _thr_col2:
-                        _use_3class = st.checkbox(
-                            "Use three-class labeling (Active / Intermediate / Inactive)",
-                            help="Molecules between the two thresholds are labeled 'Intermediate'.",
-                        )
-                    _thr_inactive = _thr_active - 1.0  # default: one log unit below
-                    if _use_3class:
-                        _thr_inactive = st.number_input(
-                            "Inactive threshold (−log₁₀)", value=_thr_active - 1.0,
-                            min_value=0.0, step=0.5, format="%.1f",
-                            help="Molecules with pActivity < this value are labeled 'Inactive'.",
-                        )
-                else:
-                    _unit_label = " nM"
-                    _scale_note = "Values in **nanomolar (nM)** (lower = more potent)."
-                    _thr_col1, _thr_col2 = st.columns(2)
-                    with _thr_col1:
-                        _thr_active = st.number_input(
-                            "Active threshold (nM)", value=1000, min_value=1,
-                            help="Molecules with activity ≤ this value are labeled 'Active'.",
-                        )
-                    with _thr_col2:
-                        _use_3class = st.checkbox(
-                            "Use three-class labeling (Active / Intermediate / Inactive)",
-                            help="Molecules between the two thresholds are labeled 'Intermediate'.",
-                        )
-                    _thr_inactive = 10000
-                    if _use_3class:
-                        _thr_inactive = st.number_input(
-                            "Inactive threshold (nM)", value=10000, min_value=1,
-                            help="Molecules above this value are labeled 'Inactive'.",
+                        _is_log_scale = st.checkbox(
+                            "Values are already on −log₁₀ scale (e.g. pIC50, pKi, pchembl_value)",
+                            value=_auto_log,
+                            help="Check this if your column contains pIC50/pKi/pchembl values "
+                                 "where higher = more potent. Leave unchecked for raw nM values "
+                                 "where lower = more potent.",
                         )
 
-                st.write(_scale_note)
-
-                # Threshold validation
-                if _use_3class:
-                    if _is_log_scale and _thr_inactive >= _thr_active:
-                        st.warning(
-                            f"Inactive threshold ({_thr_inactive:.1f}) should be **less than** "
-                            f"active threshold ({_thr_active:.1f}) on −log₁₀ scale "
-                            f"(higher = more potent)."
-                        )
-                    elif not _is_log_scale and _thr_inactive <= _thr_active:
-                        st.warning(
-                            f"Inactive threshold ({_thr_inactive:,} nM) should be **greater than** "
-                            f"active threshold ({_thr_active:,} nM) on nM scale "
-                            f"(lower = more potent)."
-                        )
-
-                # Dynamic formula expander based on selected activity type
-                _p_label = f"p{_act_type}"
-                if _is_log_scale:
-                    with st.expander(f"About {_p_label} scale", expanded=False):
-                        st.markdown(
-                            f"Your column appears to contain **{_p_label}** values "
-                            f"(already on −log₁₀ scale).\n\n"
-                            f"Higher {_p_label} = more potent compound.\n\n"
-                            f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
-                            "|:---:|---:|---|\n"
-                            "| 5 | 10,000 nM | Weak |\n"
-                            "| 6 | 1,000 nM | Moderate |\n"
-                            "| 7 | 100 nM | Good |\n"
-                            "| 8 | 10 nM | High |\n"
-                            "| 9 | 1 nM | Very high |\n"
-                        )
-                else:
-                    with st.expander(f"About {_p_label} conversion", expanded=False):
-                        st.markdown(
-                            f"**{_p_label} = −log₁₀({_act_type} × 10⁻⁹) = 9 − log₁₀({_act_type} in nM)**\n\n"
-                            f"Higher {_p_label} = more potent compound. "
-                            f"A {_p_label} of 6 corresponds to a {_act_type} of 1,000 nM (1 μM).\n\n"
-                            f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
-                            "|:---:|---:|---|\n"
-                            "| 5 | 10,000 nM | Weak |\n"
-                            "| 6 | 1,000 nM | Moderate |\n"
-                            "| 7 | 100 nM | Good |\n"
-                            "| 8 | 10 nM | High |\n"
-                            "| 9 | 1 nM | Very high |\n"
-                        )
-
-                # Visual threshold zone indicator
-                if _is_log_scale:
-                    # Log scale: higher = more potent (left=Active high, right=Inactive low)
-                    if _use_3class:
-                        st.markdown(
-                            f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
-                            f"font-weight:600;margin:8px 0 4px 0;'>"
-                            f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
-                            f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
-                            f"Active<br><span style='font-weight:400'>&ge; {_thr_active:.1f}</span></div>"
-                            f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
-                            f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
-                            f"Intermediate<br><span style='font-weight:400'>{_thr_inactive:.1f} – {_thr_active:.1f}</span></div>"
-                            f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
-                            f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
-                            f"Inactive<br><span style='font-weight:400'>&lt; {_thr_inactive:.1f}</span></div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
+                # ── Classification-specific widgets ──
+                if _task_type_selection == "Classification":
+                    # Threshold inputs adapt to scale
+                    if _is_log_scale:
+                        _unit_label = ""  # unitless
+                        _scale_note = "Values on −log₁₀ scale (higher = more potent)."
+                        _thr_col1, _thr_col2 = st.columns(2)
+                        with _thr_col1:
+                            _thr_active = st.number_input(
+                                "Active threshold (−log₁₀)", value=7.0, min_value=0.0,
+                                step=0.5, format="%.1f",
+                                help="Molecules with pActivity ≥ this value are labeled 'Active'.",
+                            )
+                        with _thr_col2:
+                            _use_3class = st.checkbox(
+                                "Use three-class labeling (Active / Intermediate / Inactive)",
+                                help="Molecules between the two thresholds are labeled 'Intermediate'.",
+                            )
+                        _thr_inactive = _thr_active - 1.0  # default: one log unit below
+                        if _use_3class:
+                            _thr_inactive = st.number_input(
+                                "Inactive threshold (−log₁₀)", value=_thr_active - 1.0,
+                                min_value=0.0, step=0.5, format="%.1f",
+                                help="Molecules with pActivity < this value are labeled 'Inactive'.",
+                            )
                     else:
-                        st.markdown(
-                            f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
-                            f"font-weight:600;margin:8px 0 4px 0;'>"
-                            f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
-                            f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
-                            f"Active<br><span style='font-weight:400'>&ge; {_thr_active:.1f}</span></div>"
-                            f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
-                            f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
-                            f"Inactive<br><span style='font-weight:400'>&lt; {_thr_active:.1f}</span></div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
-                else:
-                    # nM scale: lower = more potent (left=Active low, right=Inactive high)
+                        _unit_label = " nM"
+                        _scale_note = "Values in **nanomolar (nM)** (lower = more potent)."
+                        _thr_col1, _thr_col2 = st.columns(2)
+                        with _thr_col1:
+                            _thr_active = st.number_input(
+                                "Active threshold (nM)", value=1000, min_value=1,
+                                help="Molecules with activity ≤ this value are labeled 'Active'.",
+                            )
+                        with _thr_col2:
+                            _use_3class = st.checkbox(
+                                "Use three-class labeling (Active / Intermediate / Inactive)",
+                                help="Molecules between the two thresholds are labeled 'Intermediate'.",
+                            )
+                        _thr_inactive = 10000
+                        if _use_3class:
+                            _thr_inactive = st.number_input(
+                                "Inactive threshold (nM)", value=10000, min_value=1,
+                                help="Molecules above this value are labeled 'Inactive'.",
+                            )
+
+                    st.write(_scale_note)
+
+                    # Threshold validation
                     if _use_3class:
-                        st.markdown(
-                            f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
-                            f"font-weight:600;margin:8px 0 4px 0;'>"
-                            f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
-                            f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
-                            f"Active<br><span style='font-weight:400'>&le; {_thr_active:,} nM</span></div>"
-                            f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
-                            f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
-                            f"Intermediate<br><span style='font-weight:400'>{_thr_active:,} – {_thr_inactive:,} nM</span></div>"
-                            f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
-                            f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
-                            f"Inactive<br><span style='font-weight:400'>&gt; {_thr_inactive:,} nM</span></div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
+                        if _is_log_scale and _thr_inactive >= _thr_active:
+                            st.warning(
+                                f"Inactive threshold ({_thr_inactive:.1f}) should be **less than** "
+                                f"active threshold ({_thr_active:.1f}) on −log₁₀ scale "
+                                f"(higher = more potent)."
+                            )
+                        elif not _is_log_scale and _thr_inactive <= _thr_active:
+                            st.warning(
+                                f"Inactive threshold ({_thr_inactive:,} nM) should be **greater than** "
+                                f"active threshold ({_thr_active:,} nM) on nM scale "
+                                f"(lower = more potent)."
+                            )
+
+                    # Dynamic formula expander based on selected activity type
+                    _p_label = f"p{_act_type}"
+                    if _is_log_scale:
+                        with st.expander(f"About {_p_label} scale", expanded=False):
+                            st.markdown(
+                                f"Your column appears to contain **{_p_label}** values "
+                                f"(already on −log₁₀ scale).\n\n"
+                                f"Higher {_p_label} = more potent compound.\n\n"
+                                f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
+                                "|:---:|---:|---|\n"
+                                "| 5 | 10,000 nM | Weak |\n"
+                                "| 6 | 1,000 nM | Moderate |\n"
+                                "| 7 | 100 nM | Good |\n"
+                                "| 8 | 10 nM | High |\n"
+                                "| 9 | 1 nM | Very high |\n"
+                            )
                     else:
-                        st.markdown(
-                            f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
-                            f"font-weight:600;margin:8px 0 4px 0;'>"
-                            f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
-                            f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
-                            f"Active<br><span style='font-weight:400'>&le; {_thr_active:,} nM</span></div>"
-                            f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
-                            f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
-                            f"Inactive<br><span style='font-weight:400'>&gt; {_thr_active:,} nM</span></div>"
-                            f"</div>",
-                            unsafe_allow_html=True,
-                        )
+                        with st.expander(f"About {_p_label} conversion", expanded=False):
+                            st.markdown(
+                                f"**{_p_label} = −log₁₀({_act_type} × 10⁻⁹) = 9 − log₁₀({_act_type} in nM)**\n\n"
+                                f"Higher {_p_label} = more potent compound. "
+                                f"A {_p_label} of 6 corresponds to a {_act_type} of 1,000 nM (1 μM).\n\n"
+                                f"| {_p_label} | {_act_type} (nM) | Potency tier |\n"
+                                "|:---:|---:|---|\n"
+                                "| 5 | 10,000 nM | Weak |\n"
+                                "| 6 | 1,000 nM | Moderate |\n"
+                                "| 7 | 100 nM | Good |\n"
+                                "| 8 | 10 nM | High |\n"
+                                "| 9 | 1 nM | Very high |\n"
+                            )
 
-                _labeled_df, _skipped = label_activity(
-                    _uploaded_df, _act_col, _act_type, _thr_active, _thr_inactive,
-                    _use_3class, is_log_scale=_is_log_scale,
-                )
+                    # Visual threshold zone indicator
+                    if _is_log_scale:
+                        if _use_3class:
+                            st.markdown(
+                                f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                                f"font-weight:600;margin:8px 0 4px 0;'>"
+                                f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                                f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                                f"Active<br><span style='font-weight:400'>&ge; {_thr_active:.1f}</span></div>"
+                                f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
+                                f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
+                                f"Intermediate<br><span style='font-weight:400'>{_thr_inactive:.1f} – {_thr_active:.1f}</span></div>"
+                                f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                                f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                                f"Inactive<br><span style='font-weight:400'>&lt; {_thr_inactive:.1f}</span></div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                                f"font-weight:600;margin:8px 0 4px 0;'>"
+                                f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                                f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                                f"Active<br><span style='font-weight:400'>&ge; {_thr_active:.1f}</span></div>"
+                                f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                                f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                                f"Inactive<br><span style='font-weight:400'>&lt; {_thr_active:.1f}</span></div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                    else:
+                        if _use_3class:
+                            st.markdown(
+                                f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                                f"font-weight:600;margin:8px 0 4px 0;'>"
+                                f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                                f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                                f"Active<br><span style='font-weight:400'>&le; {_thr_active:,} nM</span></div>"
+                                f"<div style='flex:1;background:#ff7f0e22;border:1px solid #ff7f0e;"
+                                f"color:#a85200;padding:6px 8px;text-align:center;border-left:none;'>"
+                                f"Intermediate<br><span style='font-weight:400'>{_thr_active:,} – {_thr_inactive:,} nM</span></div>"
+                                f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                                f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                                f"Inactive<br><span style='font-weight:400'>&gt; {_thr_inactive:,} nM</span></div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                f"<div style='display:flex;border-radius:6px;overflow:hidden;font-size:0.82em;"
+                                f"font-weight:600;margin:8px 0 4px 0;'>"
+                                f"<div style='flex:1;background:#2ca02c22;border:1px solid #2ca02c;"
+                                f"color:#1a6b1a;padding:6px 8px;text-align:center;'>"
+                                f"Active<br><span style='font-weight:400'>&le; {_thr_active:,} nM</span></div>"
+                                f"<div style='flex:1;background:#d6272822;border:1px solid #d62728;"
+                                f"color:#8b0000;padding:6px 8px;text-align:center;border-left:none;'>"
+                                f"Inactive<br><span style='font-weight:400'>&gt; {_thr_active:,} nM</span></div>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
 
-                # Build canonical SMILES → label map for downstream use
-                if _uploaded_smiles_col:
-                    for _, _row in _labeled_df.iterrows():
-                        if _row["Activity_Label"] is None:
-                            continue
-                        _mol_tmp = Chem.MolFromSmiles(str(_row[_uploaded_smiles_col]))
-                        if _mol_tmp:
-                            _csmi = Chem.MolToSmiles(_mol_tmp)
-                            _activity_label_map[_csmi] = _row["Activity_Label"]
-                            _activity_pval_map[_csmi] = _row["pActivity"]
+                    # Run label_activity to produce string labels + pActivity
+                    _labeled_df, _skipped = label_activity(
+                        _uploaded_df, _act_col, _act_type, _thr_active, _thr_inactive,
+                        _use_3class, is_log_scale=_is_log_scale,
+                    )
 
-                # Summary line + bar chart
-                _label_counts = (
-                    _labeled_df["Activity_Label"].dropna().value_counts().reset_index()
-                )
-                _label_counts.columns = ["Label", "Count"]
-                # Enforce Active → Intermediate → Inactive order for summary text
-                _ordered_labels = [l for l in ["Active", "Intermediate", "Inactive"]
-                                   if l in _label_counts["Label"].values]
-                _summary_parts = [
-                    f"**{_label_counts.loc[_label_counts['Label'] == l, 'Count'].iloc[0]} {l}**"
-                    for l in _ordered_labels
-                ]
-                st.write(
-                    ", ".join(_summary_parts)
-                    + (f" — {len(_skipped)} skipped (missing / zero / non-numeric)" if _skipped else "")
-                )
+                    # Build canonical SMILES → label map for downstream use
+                    if _uploaded_smiles_col:
+                        for _, _row in _labeled_df.iterrows():
+                            if _row["Activity_Label"] is None:
+                                continue
+                            _mol_tmp = Chem.MolFromSmiles(str(_row[_uploaded_smiles_col]))
+                            if _mol_tmp:
+                                _csmi = Chem.MolToSmiles(_mol_tmp)
+                                _activity_label_map[_csmi] = _row["Activity_Label"]
+                                _activity_pval_map[_csmi] = _row["pActivity"]
 
-                if not _label_counts.empty:
-                    _bar = (
-                        alt.Chart(_label_counts)
-                        .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
-                        .encode(
-                            x=alt.X("Label:N", title=None,
-                                    sort=["Active", "Intermediate", "Inactive"]),
-                            y=alt.Y("Count:Q", title="Molecules"),
-                            color=alt.Color(
-                                "Label:N",
-                                scale=alt.Scale(
-                                    domain=["Active", "Intermediate", "Inactive"],
-                                    range=["#2ca02c", "#ff7f0e", "#d62728"],
+                    # Summary line + bar chart
+                    _label_counts = (
+                        _labeled_df["Activity_Label"].dropna().value_counts().reset_index()
+                    )
+                    _label_counts.columns = ["Label", "Count"]
+                    _ordered_labels = [l for l in ["Active", "Intermediate", "Inactive"]
+                                       if l in _label_counts["Label"].values]
+                    _summary_parts = [
+                        f"**{_label_counts.loc[_label_counts['Label'] == l, 'Count'].iloc[0]} {l}**"
+                        for l in _ordered_labels
+                    ]
+                    st.write(
+                        ", ".join(_summary_parts)
+                        + (f" — {len(_skipped)} skipped (missing / zero / non-numeric)" if _skipped else "")
+                    )
+
+                    if not _label_counts.empty:
+                        _bar = (
+                            alt.Chart(_label_counts)
+                            .mark_bar(cornerRadiusTopLeft=4, cornerRadiusTopRight=4)
+                            .encode(
+                                x=alt.X("Label:N", title=None,
+                                        sort=["Active", "Intermediate", "Inactive"]),
+                                y=alt.Y("Count:Q", title="Molecules"),
+                                color=alt.Color(
+                                    "Label:N",
+                                    scale=alt.Scale(
+                                        domain=["Active", "Intermediate", "Inactive"],
+                                        range=["#2ca02c", "#ff7f0e", "#d62728"],
+                                    ),
+                                    legend=None,
                                 ),
-                                legend=None,
-                            ),
-                            tooltip=["Label:N", "Count:Q"],
+                                tooltip=["Label:N", "Count:Q"],
+                            )
+                            .properties(height=160)
                         )
-                        .properties(height=160)
+                        st.altair_chart(_bar, use_container_width=True)
+
+                        _total = _label_counts["Count"].sum()
+                        if (_label_counts["Count"] / _total < 0.1).any():
+                            st.warning(
+                                "Class imbalance detected — consider balancing techniques "
+                                "(e.g. oversampling, SMOTE, or class weights) before ML training."
+                            )
+
+                    if _skipped:
+                        with st.expander(f"View {len(_skipped)} skipped rows"):
+                            st.dataframe(pd.DataFrame(_skipped))
+
+                # ── Regression-specific widgets ──
+                elif _task_type_selection == "Regression":
+                    # For regression, reuse label_activity to get pActivity values
+                    # (it handles both log-scale pass-through and nM→pActivity conversion)
+                    _labeled_df, _skipped = label_activity(
+                        _uploaded_df, _act_col, _act_type, 0, 0,
+                        use_intermediate=False, is_log_scale=_is_log_scale,
                     )
-                    st.altair_chart(_bar, use_container_width=True)
 
-                    _total = _label_counts["Count"].sum()
-                    if (_label_counts["Count"] / _total < 0.1).any():
-                        st.warning(
-                            "Class imbalance detected — consider balancing techniques "
-                            "(e.g. oversampling, SMOTE, or class weights) before ML training."
-                        )
+                    # Build canonical SMILES → pActivity map (regression target)
+                    if _uploaded_smiles_col:
+                        for _, _row in _labeled_df.iterrows():
+                            if _row["pActivity"] is None:
+                                continue
+                            _mol_tmp = Chem.MolFromSmiles(str(_row[_uploaded_smiles_col]))
+                            if _mol_tmp:
+                                _csmi = Chem.MolToSmiles(_mol_tmp)
+                                _activity_pval_map[_csmi] = _row["pActivity"]
 
-                if _skipped:
-                    with st.expander(f"View {len(_skipped)} skipped rows"):
-                        st.dataframe(pd.DataFrame(_skipped))
+                    _n_valid = sum(1 for v in _labeled_df["pActivity"] if v is not None)
+                    if _is_log_scale:
+                        st.write(f"**{_n_valid}** molecules with valid pActivity values (used as-is).")
+                    else:
+                        st.write(f"**{_n_valid}** molecules with valid values (converted to pActivity via −log₁₀).")
+                    if _skipped:
+                        st.write(f"{len(_skipped)} rows skipped (missing / zero / non-numeric).")
+                        with st.expander(f"View {len(_skipped)} skipped rows"):
+                            st.dataframe(pd.DataFrame(_skipped))
 
     max_violations = st.number_input(
         "Max Lipinski violations allowed",
@@ -950,18 +994,45 @@ if st.session_state["active_tab"] == "preprocessing":
                 _source_filename = "Pasted SMILES"
             else:
                 _source_filename = "Unknown"
+            # ── Build task-type metadata and target column ──
+            # target_column[i] corresponds to smiles[i] — both are parallel
+            # lists indexed by position in result["kept_smiles"].
+            _kept_smiles = result["kept_smiles"]
+            _pl_label_map_snap = st.session_state["pipeline_label_map"]
+            _pl_pval_map_snap = st.session_state["pipeline_pval_map"]
+
+            if _task_type_selection == "Classification":
+                _ds_task_type = "classification"
+                _ds_n_classes = 3 if _use_3class else 2
+                # Build string labels parallel to kept_smiles, then convert
+                _kept_labels = [_pl_label_map_snap.get(s) for s in _kept_smiles]
+                _ds_target_column = labels_to_targets(_kept_labels, use_3class=_use_3class)
+            elif _task_type_selection == "Regression":
+                _ds_task_type = "regression"
+                _ds_n_classes = None
+                # pActivity values parallel to kept_smiles (already log-scale)
+                _ds_target_column = [_pl_pval_map_snap.get(s) for s in _kept_smiles]
+            else:
+                _ds_task_type = None
+                _ds_n_classes = None
+                _ds_target_column = None
+
             st.session_state["active_dataset"] = {
                 "source_filename": _source_filename,
                 "loaded_at": datetime.now().isoformat(),
                 "n_original": len(smiles_list),
-                "n_molecules": len(result["kept_smiles"]),
+                "n_molecules": len(_kept_smiles),
                 "mols": result["kept_mols"],
-                "smiles": result["kept_smiles"],
+                "smiles": _kept_smiles,
                 "preprocessing_config": st.session_state["pipeline_settings"],
                 "pipeline_result": st.session_state["pipeline_result"],
-                "label_map": st.session_state["pipeline_label_map"],
-                "pval_map": st.session_state["pipeline_pval_map"],
+                "label_map": _pl_label_map_snap,
+                "pval_map": _pl_pval_map_snap,
                 "pchembl_map": st.session_state["pipeline_pchembl_map"],
+                # Task-aware ML keys (additive — existing keys unchanged)
+                "task_type": _ds_task_type,        # "classification" | "regression" | None
+                "n_classes": _ds_n_classes,         # 2 | 3 | None
+                "target_column": _ds_target_column, # list parallel to smiles, or None
             }
             # Clear stale downstream results (dataset changed)
             # NOTE: if these keys are renamed in a future cleanup, update this list too.
@@ -2934,6 +3005,24 @@ if st.session_state["active_tab"] == "splitting":
     _spl_smiles = _spl_ds["smiles"]
     _spl_current_hash = _split_data_hash(_spl_smiles)
 
+    # ── Task type display ──
+    _spl_task = _spl_ds.get("task_type")
+    _spl_task_inferred = False
+    if _spl_task is None and _spl_ds.get("label_map"):
+        _spl_task = "classification"
+        _spl_task_inferred = True
+
+    if _spl_task == "classification":
+        _spl_n_cls = _spl_ds.get("n_classes", 2)
+        st.info(f"Preparing: **Classification ({_spl_n_cls}-class)**")
+        if _spl_task_inferred:
+            st.caption("Task type inferred from labels; re-run Preprocessing to set explicitly.")
+    elif _spl_task == "regression":
+        st.info("Preparing: **Regression**")
+    else:
+        st.info("Task type not set — configure activity labeling in Preprocessing "
+                "to enable stratified split and include a target column in downloads.")
+
     # Staleness: clear old results if the dataset changed
     if "split_data_hash" in st.session_state and st.session_state["split_data_hash"] != _spl_current_hash:
         for k in ["split_results", "split_pca_current", "split_pca_random", "split_method"]:
@@ -2941,8 +3030,15 @@ if st.session_state["active_tab"] == "splitting":
         st.warning("The preprocessed dataset has changed since the last split. Please re-run the split.")
     st.session_state["split_data_hash"] = _spl_current_hash
 
+    # ── Build stratified labels from active_dataset (parallel to smiles) ──
+    # label_map is keyed by canonical SMILES; iterate smiles in order to
+    # produce a parallel list so labels[i] corresponds to smiles[i].
+    _spl_label_map = _spl_ds.get("label_map", {})
+    _spl_all_labels = [_spl_label_map.get(s) for s in _spl_smiles] if _spl_label_map else None
+    _spl_has_labels = _spl_all_labels is not None and any(l is not None for l in _spl_all_labels)
+
     # ── Settings ──
-    _spl_c1, _spl_c2, _spl_c3, _spl_c4 = st.columns(4)
+    _spl_c1, _spl_c2, _spl_c3 = st.columns(3)
     with _spl_c1:
         _spl_method = st.radio("Split method", ["Scaffold", "Random", "Stratified random"],
                                 key="spl_method_radio", horizontal=False,
@@ -2955,24 +3051,33 @@ if st.session_state["active_tab"] == "splitting":
     with _spl_c3:
         _spl_seed = st.number_input("Random seed", min_value=0, max_value=99999, value=42, key="spl_seed",
                                     help="Controls reproducibility. Same seed + same data = same split.")
-    with _spl_c4:
-        _spl_labels = None
-        _spl_label_col = None
-        if _spl_method == "Stratified random":
-            # Check for activity labels in session state
-            _spl_available_labels = {}
-            if "activity_labels" in st.session_state:
-                _spl_available_labels["Activity (from preprocessing)"] = st.session_state["activity_labels"]
-            if _spl_available_labels:
-                _spl_label_col = st.selectbox("Label column", list(_spl_available_labels.keys()), key="spl_label_col")
-                _spl_labels = _spl_available_labels[_spl_label_col]
-            else:
-                st.warning("No activity labels found. Run preprocessing with activity labeling, or use a different split method.")
+
+    _spl_labels = None
+    _spl_unlabeled_handling = None
+    if _spl_method == "Stratified random":
+        if _spl_task != "classification":
+            st.warning("Stratified split requires Classification task type. "
+                       "Re-run Preprocessing with Classification selected, or use Scaffold/Random.")
+        elif not _spl_has_labels:
+            st.warning("No activity labels found. Run preprocessing with activity labeling enabled.")
+        else:
+            # Check for None values in labels
+            _spl_n_unlabeled = sum(1 for l in _spl_all_labels if l is None)
+            if _spl_n_unlabeled > 0:
+                st.warning(f"**{_spl_n_unlabeled}** of {len(_spl_all_labels)} molecules have no activity label.")
+                _spl_unlabeled_handling = st.radio(
+                    "How to handle unlabeled molecules?",
+                    ["Exclude from split", "Include in training set only"],
+                    key="spl_unlabeled_handling",
+                    help="Exclude: only labeled molecules are split. "
+                         "Include in training: unlabeled go to train, labeled are stratified into train+test.",
+                )
+            _spl_labels = _spl_all_labels
 
     # ── Run split ──
     if st.button("Run Split", type="primary", key="spl_run"):
         if _spl_method == "Stratified random" and _spl_labels is None:
-            st.error("Stratified split requires activity labels. Please select a label column or use a different method.")
+            st.error("Stratified split requires Classification task type with activity labels.")
         else:
             with st.spinner("Computing split..."):
                 if _spl_method == "Scaffold":
@@ -2982,9 +3087,55 @@ if st.session_state["active_tab"] == "splitting":
                     _spl_result = random_split(_spl_mols, _spl_smiles,
                                                test_size=_spl_test_size, random_state=_spl_seed)
                 else:
-                    _spl_result = random_split(_spl_mols, _spl_smiles,
-                                               test_size=_spl_test_size, random_state=_spl_seed,
-                                               labels=_spl_labels, stratify=True)
+                    # Stratified random — handle unlabeled molecules
+                    _spl_labeled_mask = [l is not None for l in _spl_labels]
+                    _spl_has_none = not all(_spl_labeled_mask)
+
+                    if _spl_has_none and _spl_unlabeled_handling == "Exclude from split":
+                        # Filter to labeled-only subset
+                        _spl_filt_idx = [i for i, m in enumerate(_spl_labeled_mask) if m]
+                        _spl_filt_mols = [_spl_mols[i] for i in _spl_filt_idx]
+                        _spl_filt_smi = [_spl_smiles[i] for i in _spl_filt_idx]
+                        _spl_filt_labels = [_spl_labels[i] for i in _spl_filt_idx]
+                        _spl_result = random_split(_spl_filt_mols, _spl_filt_smi,
+                                                    test_size=_spl_test_size, random_state=_spl_seed,
+                                                    labels=_spl_filt_labels, stratify=True)
+                        # Remap indices back to original dataset
+                        _spl_result["train_indices"] = [_spl_filt_idx[i] for i in _spl_result["train_indices"]]
+                        _spl_result["test_indices"] = [_spl_filt_idx[i] for i in _spl_result["test_indices"]]
+                        _spl_result["n_excluded"] = len(_spl_smiles) - len(_spl_filt_idx)
+
+                    elif _spl_has_none and _spl_unlabeled_handling == "Include in training set only":
+                        # Split only labeled molecules, then add unlabeled to train
+                        _spl_filt_idx = [i for i, m in enumerate(_spl_labeled_mask) if m]
+                        _spl_unlabeled_idx = [i for i, m in enumerate(_spl_labeled_mask) if not m]
+                        _spl_filt_mols = [_spl_mols[i] for i in _spl_filt_idx]
+                        _spl_filt_smi = [_spl_smiles[i] for i in _spl_filt_idx]
+                        _spl_filt_labels = [_spl_labels[i] for i in _spl_filt_idx]
+                        _spl_result = random_split(_spl_filt_mols, _spl_filt_smi,
+                                                    test_size=_spl_test_size, random_state=_spl_seed,
+                                                    labels=_spl_filt_labels, stratify=True)
+                        # Remap indices and prepend unlabeled to train
+                        _spl_result["train_indices"] = (
+                            _spl_unlabeled_idx +
+                            [_spl_filt_idx[i] for i in _spl_result["train_indices"]]
+                        )
+                        _spl_result["test_indices"] = [_spl_filt_idx[i] for i in _spl_result["test_indices"]]
+                        # Update train_df to include unlabeled rows
+                        _spl_unlabeled_df = pd.DataFrame({
+                            "SMILES": [_spl_smiles[i] for i in _spl_unlabeled_idx],
+                            "Split": "Train",
+                            "Label": None,
+                        })
+                        _spl_result["train_df"] = pd.concat(
+                            [_spl_unlabeled_df, _spl_result["train_df"]], ignore_index=True
+                        )
+                        _spl_result["n_unlabeled_in_train"] = len(_spl_unlabeled_idx)
+                    else:
+                        # All labeled — no None values
+                        _spl_result = random_split(_spl_mols, _spl_smiles,
+                                                    test_size=_spl_test_size, random_state=_spl_seed,
+                                                    labels=_spl_labels, stratify=True)
 
                 st.session_state["split_results"] = _spl_result
                 st.session_state["split_method"] = _spl_method
@@ -3021,6 +3172,12 @@ if st.session_state["active_tab"] == "splitting":
                      "All molecules were placed in the training set. Consider using a random split instead.")
         elif _spl_res.get("fallback") == "too_small":
             st.warning("Dataset too small to split (< 2 molecules). All molecules placed in training set.")
+
+        # Unlabeled handling info
+        if _spl_res.get("n_excluded"):
+            st.info(f"{_spl_res['n_excluded']} unlabeled molecules were excluded from the split.")
+        elif _spl_res.get("n_unlabeled_in_train"):
+            st.info(f"{_spl_res['n_unlabeled_in_train']} unlabeled molecules were added to the training set.")
 
         # Summary table
         render_provenance_caption()
@@ -3166,12 +3323,26 @@ if st.session_state["active_tab"] == "splitting":
                 else:
                     st.write("No test molecules (see warning above).")
 
+        # ── Build download DataFrames (add target column if available) ──
+        # target_column[i] corresponds to smiles[i] in active_dataset;
+        # use train_indices / test_indices to slice it in parallel.
+        _spl_targets = _spl_ds.get("target_column")
+        if _spl_targets is not None:
+            _dl_train_df = _spl_res["train_df"].copy()
+            _dl_train_df["target"] = [_spl_targets[i] for i in _spl_res["train_indices"]]
+            _dl_test_df = _spl_res["test_df"].copy()
+            if _spl_res["test_indices"]:
+                _dl_test_df["target"] = [_spl_targets[i] for i in _spl_res["test_indices"]]
+        else:
+            _dl_train_df = _spl_res["train_df"]
+            _dl_test_df = _spl_res["test_df"]
+
         # Download buttons
         _dl_b1, _dl_b2, _dl_b3 = st.columns(3)
         with _dl_b1:
             st.download_button(
                 "Download train set CSV",
-                data=_spl_res["train_df"].to_csv(index=False),
+                data=_dl_train_df.to_csv(index=False),
                 file_name=timestamp_filename("split_train"),
                 mime="text/csv", key="spl_dl_train",
             )
@@ -3179,12 +3350,12 @@ if st.session_state["active_tab"] == "splitting":
             if _n_test > 0:
                 st.download_button(
                     "Download test set CSV",
-                    data=_spl_res["test_df"].to_csv(index=False),
+                    data=_dl_test_df.to_csv(index=False),
                     file_name=timestamp_filename("split_test"),
                     mime="text/csv", key="spl_dl_test",
                 )
         with _dl_b3:
-            _combined = pd.concat([_spl_res["train_df"], _spl_res["test_df"]], ignore_index=True)
+            _combined = pd.concat([_dl_train_df, _dl_test_df], ignore_index=True)
             st.download_button(
                 "Download combined CSV",
                 data=_combined.to_csv(index=False),

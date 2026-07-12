@@ -191,6 +191,11 @@ def random_split(mols, smiles, test_size=0.2, random_state=42,
     if stratify:
         if labels is None:
             raise ValueError("stratify=True requires labels to be provided")
+        if any(l is None for l in labels):
+            raise ValueError(
+                "Labels contain None values. Remove or exclude unlabeled "
+                "molecules before stratified splitting."
+            )
         unique = set(labels)
         if len(unique) < 2:
             raise ValueError(

@@ -595,6 +595,25 @@ def label_activity(
     return df, skipped
 
 
+def labels_to_targets(labels, use_3class=False):
+    """
+    Convert string activity labels to numeric ML targets.
+
+    Parameters:
+        labels: list of str or None ("Active", "Intermediate", "Inactive")
+        use_3class: if True, use ordinal mapping (Inactive=0, Intermediate=1, Active=2)
+                    if False, use binary mapping (Active=1, Inactive=0)
+
+    Returns:
+        list of int or None (None for unmapped/missing labels)
+    """
+    if use_3class:
+        mapping = {"Inactive": 0, "Intermediate": 1, "Active": 2}
+    else:
+        mapping = {"Active": 1, "Inactive": 0}
+    return [mapping.get(label) for label in labels]
+
+
 def analyze_scaffolds(mol_list):
     """
     Extract Murcko scaffolds and compute frequency statistics.
