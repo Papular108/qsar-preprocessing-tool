@@ -9,7 +9,7 @@ from io import BytesIO
 from datetime import datetime
 
 # ── Version (single source of truth) ──────────────────────────────────────────
-VERSION = "1.0.0"
+VERSION = "1.0.1"
 
 
 def timestamp_filename(prefix, extension="csv"):
