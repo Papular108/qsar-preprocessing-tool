@@ -1201,206 +1201,206 @@ if st.session_state["active_tab"] == "preprocessing":
             else:
                 st.info("No molecules were removed.")
 
-        section_banner("Descriptor Distributions")
-        if len(result["kept_smiles"]) < 2:
-            st.info("At least 2 kept molecules are needed to show distributions.")
-        else:
-            desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
-            if result["qed_scores"] is not None:
-                desc_df["QED"] = result["qed_scores"]
+        with st.expander("Descriptor Distributions", expanded=False):
+            if len(result["kept_smiles"]) < 2:
+                st.info("At least 2 kept molecules are needed to show distributions.")
+            else:
+                desc_df = _cached_descriptors(tuple(result["kept_smiles"]))
+                if result["qed_scores"] is not None:
+                    desc_df["QED"] = result["qed_scores"]
 
-            # Add activity labels to descriptor df if available
-            _dist_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
-            _dist_has_labels = _pl_label_map and any(l is not None for l in _dist_labels)
-            if _dist_has_labels:
-                desc_df["Activity_Class"] = _dist_labels
-                _dist_classes = [c for c in ["Active", "Intermediate", "Inactive"]
-                                 if c in _dist_labels]
-                _dist_color_scale = alt.Scale(
-                    domain=_dist_classes,
-                    range=[{"Active": "#2ca02c", "Intermediate": "#ff7f0e",
-                            "Inactive": "#d62728"}[c] for c in _dist_classes],
+                # Add activity labels to descriptor df if available
+                _dist_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+                _dist_has_labels = _pl_label_map and any(l is not None for l in _dist_labels)
+                if _dist_has_labels:
+                    desc_df["Activity_Class"] = _dist_labels
+                    _dist_classes = [c for c in ["Active", "Intermediate", "Inactive"]
+                                     if c in _dist_labels]
+                    _dist_color_scale = alt.Scale(
+                        domain=_dist_classes,
+                        range=[{"Active": "#2ca02c", "Intermediate": "#ff7f0e",
+                                "Inactive": "#d62728"}[c] for c in _dist_classes],
+                    )
+
+                st.caption(
+                    "Physicochemical property distributions for the kept molecules. "
+                    "Hover over bars for exact counts."
                 )
-
-            st.caption(
-                "Physicochemical property distributions for the kept molecules. "
-                "Hover over bars for exact counts."
-            )
-            _DIST_FIELDS = [
-                ("MW",             "Molecular Weight (Da)"),
-                ("LogP",           "LogP"),
-                ("TPSA",           "TPSA (Å²)"),
-                ("HBD",            "H-bond Donors"),
-                ("HBA",            "H-bond Acceptors"),
-                ("RotatableBonds", "Rotatable Bonds"),
-            ]
-            if result["qed_scores"] is not None:
-                _DIST_FIELDS.append(("QED", "QED Score (0–1)"))
-            _grid_rows = [st.columns(3) for _ in range((len(_DIST_FIELDS) + 2) // 3)]
-            for i, (field, label) in enumerate(_DIST_FIELDS):
-                with _grid_rows[i // 3][i % 3]:
-                    if _dist_has_labels:
-                        _desc_filtered = desc_df[desc_df["Activity_Class"].notna()]
-                        chart = (
-                            alt.Chart(_desc_filtered)
-                            .mark_bar(opacity=0.6)
-                            .encode(
-                                alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
-                                alt.Y("count()", title="Count", stack=None),
-                                color=alt.Color(
-                                    "Activity_Class:N",
-                                    scale=_dist_color_scale,
-                                    legend=alt.Legend(title="Class"),
-                                ),
-                                tooltip=[
-                                    alt.Tooltip(f"{field}:Q", bin=True, title=label),
-                                    alt.Tooltip("count()", title="Count"),
-                                    alt.Tooltip("Activity_Class:N", title="Class"),
-                                ],
+                _DIST_FIELDS = [
+                    ("MW",             "Molecular Weight (Da)"),
+                    ("LogP",           "LogP"),
+                    ("TPSA",           "TPSA (Å²)"),
+                    ("HBD",            "H-bond Donors"),
+                    ("HBA",            "H-bond Acceptors"),
+                    ("RotatableBonds", "Rotatable Bonds"),
+                ]
+                if result["qed_scores"] is not None:
+                    _DIST_FIELDS.append(("QED", "QED Score (0–1)"))
+                _grid_rows = [st.columns(3) for _ in range((len(_DIST_FIELDS) + 2) // 3)]
+                for i, (field, label) in enumerate(_DIST_FIELDS):
+                    with _grid_rows[i // 3][i % 3]:
+                        if _dist_has_labels:
+                            _desc_filtered = desc_df[desc_df["Activity_Class"].notna()]
+                            chart = (
+                                alt.Chart(_desc_filtered)
+                                .mark_bar(opacity=0.6)
+                                .encode(
+                                    alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
+                                    alt.Y("count()", title="Count", stack=None),
+                                    color=alt.Color(
+                                        "Activity_Class:N",
+                                        scale=_dist_color_scale,
+                                        legend=alt.Legend(title="Class"),
+                                    ),
+                                    tooltip=[
+                                        alt.Tooltip(f"{field}:Q", bin=True, title=label),
+                                        alt.Tooltip("count()", title="Count"),
+                                        alt.Tooltip("Activity_Class:N", title="Class"),
+                                    ],
+                                )
+                                .properties(height=180)
                             )
-                            .properties(height=180)
-                        )
-                    else:
-                        chart = (
-                            alt.Chart(desc_df)
-                            .mark_bar(color="#4C72B0")
-                            .encode(
-                                alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
-                                alt.Y("count()", title="Count"),
-                                tooltip=[
-                                    alt.Tooltip(f"{field}:Q", bin=True, title=label),
-                                    alt.Tooltip("count()", title="Count"),
-                                ],
+                        else:
+                            chart = (
+                                alt.Chart(desc_df)
+                                .mark_bar(color="#4C72B0")
+                                .encode(
+                                    alt.X(f"{field}:Q", bin=alt.Bin(maxbins=15), title=label),
+                                    alt.Y("count()", title="Count"),
+                                    tooltip=[
+                                        alt.Tooltip(f"{field}:Q", bin=True, title=label),
+                                        alt.Tooltip("count()", title="Count"),
+                                    ],
+                                )
+                                .properties(height=180)
                             )
-                            .properties(height=180)
-                        )
-                    st.altair_chart(chart, use_container_width=True)
+                        st.altair_chart(chart, use_container_width=True)
 
         if len(result["kept_smiles"]) >= 5:
-            section_banner("Descriptor Correlations")
-            _sa_tuple = tuple(result["sa_scores"]) if result["sa_scores"] is not None else None
-            _qed_tuple = tuple(result["qed_scores"]) if result["qed_scores"] is not None else None
-            corr_long = _cached_corr_matrix(tuple(result["kept_smiles"]), _sa_tuple, _qed_tuple)
+            with st.expander("Descriptor Correlations", expanded=False):
+                _sa_tuple = tuple(result["sa_scores"]) if result["sa_scores"] is not None else None
+                _qed_tuple = tuple(result["qed_scores"]) if result["qed_scores"] is not None else None
+                corr_long = _cached_corr_matrix(tuple(result["kept_smiles"]), _sa_tuple, _qed_tuple)
 
-            corr_rect = (
-                alt.Chart(corr_long)
-                .mark_rect()
-                .encode(
-                    x=alt.X("descriptor_x:N", title=None, sort=None),
-                    y=alt.Y("descriptor_y:N", title=None, sort=None),
-                    color=alt.Color(
-                        "correlation:Q",
-                        scale=alt.Scale(domain=[-1, 0, 1], range=["#d73027", "#ffffff", "#4575b4"]),
-                        legend=alt.Legend(title="Pearson r"),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("descriptor_x:N", title="Descriptor X"),
-                        alt.Tooltip("descriptor_y:N", title="Descriptor Y"),
-                        alt.Tooltip("correlation:Q", title="Pearson r", format=".2f"),
-                    ],
+                corr_rect = (
+                    alt.Chart(corr_long)
+                    .mark_rect()
+                    .encode(
+                        x=alt.X("descriptor_x:N", title=None, sort=None),
+                        y=alt.Y("descriptor_y:N", title=None, sort=None),
+                        color=alt.Color(
+                            "correlation:Q",
+                            scale=alt.Scale(domain=[-1, 0, 1], range=["#d73027", "#ffffff", "#4575b4"]),
+                            legend=alt.Legend(title="Pearson r"),
+                        ),
+                        tooltip=[
+                            alt.Tooltip("descriptor_x:N", title="Descriptor X"),
+                            alt.Tooltip("descriptor_y:N", title="Descriptor Y"),
+                            alt.Tooltip("correlation:Q", title="Pearson r", format=".2f"),
+                        ],
+                    )
                 )
-            )
-            corr_text = (
-                alt.Chart(corr_long)
-                .mark_text(fontSize=11)
-                .encode(
-                    x=alt.X("descriptor_x:N", sort=None),
-                    y=alt.Y("descriptor_y:N", sort=None),
-                    text=alt.Text("correlation:Q", format=".2f"),
-                    color=alt.condition(
-                        "abs(datum.correlation) > 0.6",
-                        alt.value("white"),
-                        alt.value("#333333"),
-                    ),
+                corr_text = (
+                    alt.Chart(corr_long)
+                    .mark_text(fontSize=11)
+                    .encode(
+                        x=alt.X("descriptor_x:N", sort=None),
+                        y=alt.Y("descriptor_y:N", sort=None),
+                        text=alt.Text("correlation:Q", format=".2f"),
+                        color=alt.condition(
+                            "abs(datum.correlation) > 0.6",
+                            alt.value("white"),
+                            alt.value("#333333"),
+                        ),
+                    )
                 )
-            )
-            st.altair_chart((corr_rect + corr_text).properties(height=350), use_container_width=True)
-            st.caption(
-                "This heatmap shows Pearson correlations between physicochemical descriptors. "
-                "Strong correlations (close to +1 or -1) indicate redundant features — consider removing "
-                "one of a highly correlated pair before training ML models to reduce multicollinearity."
-            )
+                st.altair_chart((corr_rect + corr_text).properties(height=350), use_container_width=True)
+                st.caption(
+                    "This heatmap shows Pearson correlations between physicochemical descriptors. "
+                    "Strong correlations (close to +1 or -1) indicate redundant features — consider removing "
+                    "one of a highly correlated pair before training ML models to reduce multicollinearity."
+                )
 
         if len(result["kept_smiles"]) >= 5:
-            section_banner("Chemical Space Visualization")
-            pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
+            with st.expander("Chemical Space Visualization", expanded=False):
+                pca_df, pc1_label, pc2_label = _cached_chemical_space_pca(tuple(result["kept_smiles"]))
 
-            # Assign activity-class-aware groups when labels exist
-            _pca_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
-            _pca_has_labels = _pl_label_map and any(l is not None for l in _pca_labels)
+                # Assign activity-class-aware groups when labels exist
+                _pca_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+                _pca_has_labels = _pl_label_map and any(l is not None for l in _pca_labels)
 
-            if _pca_has_labels:
-                # Replace generic "Your molecules" with specific class names
-                _pca_group_map = {}
-                for smi, lbl in zip(result["kept_smiles"], _pca_labels):
-                    _pca_group_map[smi] = lbl if lbl else "Unlabeled"
-                pca_df = pca_df.copy()
-                pca_df["Group"] = pca_df.apply(
-                    lambda r: _pca_group_map.get(r["SMILES"], r["Group"])
-                    if r["Group"] == "Your molecules" else r["Group"],
-                    axis=1,
-                )
-                _pca_classes = [c for c in ["Active", "Intermediate", "Inactive"]
-                                if c in pca_df["Group"].values]
-                _pca_domain = _pca_classes + ["FDA-approved drugs"]
-                _class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
-                                 "Inactive": "#d62728"}
-                _pca_range = [_class_colors[c] for c in _pca_classes] + ["#9467bd"]
-                # FDA dots should be behind user molecules
-                _pca_order = ["FDA-approved drugs"] + _pca_classes
-            else:
-                _pca_domain = ["Your molecules", "FDA-approved drugs"]
-                _pca_range = ["#1f77b4", "#BBBBBB"]
-                _pca_order = ["FDA-approved drugs", "Your molecules"]
+                if _pca_has_labels:
+                    # Replace generic "Your molecules" with specific class names
+                    _pca_group_map = {}
+                    for smi, lbl in zip(result["kept_smiles"], _pca_labels):
+                        _pca_group_map[smi] = lbl if lbl else "Unlabeled"
+                    pca_df = pca_df.copy()
+                    pca_df["Group"] = pca_df.apply(
+                        lambda r: _pca_group_map.get(r["SMILES"], r["Group"])
+                        if r["Group"] == "Your molecules" else r["Group"],
+                        axis=1,
+                    )
+                    _pca_classes = [c for c in ["Active", "Intermediate", "Inactive"]
+                                    if c in pca_df["Group"].values]
+                    _pca_domain = _pca_classes + ["FDA-approved drugs"]
+                    _class_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
+                                     "Inactive": "#d62728"}
+                    _pca_range = [_class_colors[c] for c in _pca_classes] + ["#9467bd"]
+                    # FDA dots should be behind user molecules
+                    _pca_order = ["FDA-approved drugs"] + _pca_classes
+                else:
+                    _pca_domain = ["Your molecules", "FDA-approved drugs"]
+                    _pca_range = ["#1f77b4", "#BBBBBB"]
+                    _pca_order = ["FDA-approved drugs", "Your molecules"]
 
-            color_scale = alt.Scale(domain=_pca_domain, range=_pca_range)
+                color_scale = alt.Scale(domain=_pca_domain, range=_pca_range)
 
-            pca_chart = (
-                alt.Chart(pca_df)
-                .mark_circle()
-                .encode(
-                    x=alt.X("PC1:Q", title=pc1_label),
-                    y=alt.Y("PC2:Q", title=pc2_label),
-                    color=alt.Color("Group:N", scale=color_scale, legend=alt.Legend(title="Dataset")),
-                    opacity=alt.condition(
-                        alt.datum["Group"] == "FDA-approved drugs",
-                        alt.value(0.35),
-                        alt.value(0.9),
-                    ),
-                    size=alt.condition(
-                        alt.datum["Group"] == "FDA-approved drugs",
-                        alt.value(40),
-                        alt.value(80),
-                    ),
-                    order=alt.Order("_sort:Q"),
-                    tooltip=[
-                        alt.Tooltip("SMILES:N"),
-                        alt.Tooltip("MW:Q", format=".1f"),
-                        alt.Tooltip("LogP:Q", format=".2f"),
-                        alt.Tooltip("TPSA:Q", format=".1f"),
-                        alt.Tooltip("HBD:Q"),
-                        alt.Tooltip("HBA:Q"),
-                        alt.Tooltip("Group:N"),
-                    ],
+                pca_chart = (
+                    alt.Chart(pca_df)
+                    .mark_circle()
+                    .encode(
+                        x=alt.X("PC1:Q", title=pc1_label),
+                        y=alt.Y("PC2:Q", title=pc2_label),
+                        color=alt.Color("Group:N", scale=color_scale, legend=alt.Legend(title="Dataset")),
+                        opacity=alt.condition(
+                            alt.datum["Group"] == "FDA-approved drugs",
+                            alt.value(0.35),
+                            alt.value(0.9),
+                        ),
+                        size=alt.condition(
+                            alt.datum["Group"] == "FDA-approved drugs",
+                            alt.value(40),
+                            alt.value(80),
+                        ),
+                        order=alt.Order("_sort:Q"),
+                        tooltip=[
+                            alt.Tooltip("SMILES:N"),
+                            alt.Tooltip("MW:Q", format=".1f"),
+                            alt.Tooltip("LogP:Q", format=".2f"),
+                            alt.Tooltip("TPSA:Q", format=".1f"),
+                            alt.Tooltip("HBD:Q"),
+                            alt.Tooltip("HBA:Q"),
+                            alt.Tooltip("Group:N"),
+                        ],
+                    )
+                    .transform_calculate(
+                        _sort="indexof(" + str(_pca_order) + ", datum.Group)"
+                    )
+                    .properties(height=420)
                 )
-                .transform_calculate(
-                    _sort="indexof(" + str(_pca_order) + ", datum.Group)"
-                )
-                .properties(height=420)
-            )
-            st.altair_chart(pca_chart, use_container_width=True)
-            if _pca_has_labels:
-                st.caption(
-                    "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
-                    "Molecules are colored by activity class. "
-                    "The purple dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
-                )
-            else:
-                st.caption(
-                    "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
-                    "Molecules closer together have more similar properties. "
-                    "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
-                )
+                st.altair_chart(pca_chart, use_container_width=True)
+                if _pca_has_labels:
+                    st.caption(
+                        "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
+                        "Molecules are colored by activity class. "
+                        "The purple dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+                    )
+                else:
+                    st.caption(
+                        "This plot reduces your molecules' physicochemical properties to 2 dimensions using PCA. "
+                        "Molecules closer together have more similar properties. "
+                        "The grey dots represent FDA-approved drugs as a reference for 'drug-like' chemical space."
+                    )
 
 
     if "pipeline_result" in st.session_state and len(st.session_state["pipeline_result"]["kept_smiles"]) >= 5:
@@ -1429,54 +1429,55 @@ if st.session_state["active_tab"] == "preprocessing":
             ("Singleton Scaffolds", str(_scaf["singleton_count"])),
         ])
 
-        # b) Scaffold frequency chart
-        _scaf_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
-        _scaf_has_labels = _pl_label_map and any(l is not None for l in _scaf_labels)
+        # b) Scaffold frequency chart + details
+        with st.expander("Scaffold Frequency & Details", expanded=False):
+            _scaf_labels = [_pl_label_map.get(s) for s in result["kept_smiles"]]
+            _scaf_has_labels = _pl_label_map and any(l is not None for l in _scaf_labels)
 
-        _bar_data = []
-        for smi, count in list(_scaf["scaffold_counts"].items())[:15]:
-            _display = smi if len(smi) <= 30 else smi[:27] + "..."
+            _bar_data = []
+            for smi, count in list(_scaf["scaffold_counts"].items())[:15]:
+                _display = smi if len(smi) <= 30 else smi[:27] + "..."
+                if _scaf_has_labels:
+                    _idxs = [i for i, s in enumerate(_scaf["scaffold_smiles"]) if s == smi]
+                    for idx in _idxs:
+                        lbl = _scaf_labels[idx] if _scaf_labels[idx] else "Unlabeled"
+                        _bar_data.append({"Scaffold": _display, "Count": 1, "Activity": lbl})
+                else:
+                    _bar_data.append({"Scaffold": _display, "Count": count})
+
+            _bar_df = pd.DataFrame(_bar_data)
             if _scaf_has_labels:
-                _idxs = [i for i, s in enumerate(_scaf["scaffold_smiles"]) if s == smi]
-                for idx in _idxs:
-                    lbl = _scaf_labels[idx] if _scaf_labels[idx] else "Unlabeled"
-                    _bar_data.append({"Scaffold": _display, "Count": 1, "Activity": lbl})
+                _act_classes = [c for c in ["Active", "Intermediate", "Inactive", "Unlabeled"]
+                               if c in _bar_df["Activity"].values]
+                _act_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
+                               "Inactive": "#d62728", "Unlabeled": "#999999"}
+                _bar_chart = (
+                    alt.Chart(_bar_df)
+                    .mark_bar()
+                    .encode(
+                        x=alt.X("sum(Count):Q", title="Count"),
+                        y=alt.Y("Scaffold:N", sort="-x", title=""),
+                        color=alt.Color("Activity:N",
+                                        scale=alt.Scale(domain=_act_classes,
+                                                        range=[_act_colors[c] for c in _act_classes])),
+                    )
+                    .properties(height=min(len(list(_scaf["scaffold_counts"].items())[:15]) * 28, 420))
+                )
             else:
-                _bar_data.append({"Scaffold": _display, "Count": count})
-
-        _bar_df = pd.DataFrame(_bar_data)
-        if _scaf_has_labels:
-            _act_classes = [c for c in ["Active", "Intermediate", "Inactive", "Unlabeled"]
-                           if c in _bar_df["Activity"].values]
-            _act_colors = {"Active": "#2ca02c", "Intermediate": "#ff7f0e",
-                           "Inactive": "#d62728", "Unlabeled": "#999999"}
-            _bar_chart = (
-                alt.Chart(_bar_df)
-                .mark_bar()
-                .encode(
-                    x=alt.X("sum(Count):Q", title="Count"),
-                    y=alt.Y("Scaffold:N", sort="-x", title=""),
-                    color=alt.Color("Activity:N",
-                                    scale=alt.Scale(domain=_act_classes,
-                                                    range=[_act_colors[c] for c in _act_classes])),
+                _bar_chart = (
+                    alt.Chart(_bar_df)
+                    .mark_bar(color="#4C72B0")
+                    .encode(
+                        x=alt.X("Count:Q", title="Count"),
+                        y=alt.Y("Scaffold:N", sort="-x", title=""),
+                    )
+                    .properties(height=min(len(list(_scaf["scaffold_counts"].items())[:15]) * 28, 420))
                 )
-                .properties(height=min(len(list(_scaf["scaffold_counts"].items())[:15]) * 28, 420))
-            )
-        else:
-            _bar_chart = (
-                alt.Chart(_bar_df)
-                .mark_bar(color="#4C72B0")
-                .encode(
-                    x=alt.X("Count:Q", title="Count"),
-                    y=alt.Y("Scaffold:N", sort="-x", title=""),
-                )
-                .properties(height=min(len(list(_scaf["scaffold_counts"].items())[:15]) * 28, 420))
-            )
-        st.subheader("Scaffold Frequency")
-        st.altair_chart(_bar_chart, use_container_width=True)
+            st.subheader("Scaffold Frequency")
+            st.altair_chart(_bar_chart, use_container_width=True)
 
-        # c) Top scaffolds table
-        with st.expander("Top 10 scaffolds (click to expand)", expanded=False):
+            # Top scaffolds table
+            st.subheader("Top 10 Scaffolds")
             for _rank, (_ts_smi, _ts_cnt, _ts_idxs) in enumerate(_scaf["top_scaffolds"], 1):
                 _ts_pct = _ts_cnt / _n_mols * 100
                 _ts_left, _ts_right = st.columns([1, 2])
@@ -1497,15 +1498,15 @@ if st.session_state["active_tab"] == "preprocessing":
                 if _rank < len(_scaf["top_scaffolds"]):
                     st.divider()
 
-        # d) Scaffold diversity
-        st.subheader("Scaffold Diversity")
-        _diversity = _scaf["unique_scaffold_count"] / _n_mols if _n_mols > 0 else 0
-        compact_table([("Diversity Score", f"{_diversity:.2f}")])
-        st.progress(min(_diversity, 1.0))
-        st.caption(
-            "High scaffold diversity (>0.5) indicates a structurally diverse dataset. "
-            "Low diversity suggests the dataset is dominated by a few chemical series."
-        )
+            # Scaffold diversity
+            st.subheader("Scaffold Diversity")
+            _diversity = _scaf["unique_scaffold_count"] / _n_mols if _n_mols > 0 else 0
+            compact_table([("Diversity Score", f"{_diversity:.2f}")])
+            st.progress(min(_diversity, 1.0))
+            st.caption(
+                "High scaffold diversity (>0.5) indicates a structurally diverse dataset. "
+                "Low diversity suggests the dataset is dominated by a few chemical series."
+            )
 
     section_banner("Featurization")
     st.write("After preprocessing, generate descriptors and fingerprints for your kept molecules.")

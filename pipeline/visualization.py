@@ -143,7 +143,8 @@ def plot_boiled_egg(mols_df, label_col=None, draw_molecules=True):
         width=700,
         height=550,
         xaxis=dict(
-            title=dict(text='TPSA (\u00c5\u00b2)', font=dict(size=14)),
+            title=dict(text='TPSA (\u00c5\u00b2)', font=dict(size=14, color="#333")),
+            tickfont=dict(color="#333"),
             range=[-5, 200],
             gridcolor='rgba(0,0,0,0.05)',
             zeroline=False,
@@ -151,7 +152,8 @@ def plot_boiled_egg(mols_df, label_col=None, draw_molecules=True):
             dtick=20,
         ),
         yaxis=dict(
-            title=dict(text='WLOGP (Lipophilicity)', font=dict(size=14)),
+            title=dict(text='WLOGP (Lipophilicity)', font=dict(size=14, color="#333")),
+            tickfont=dict(color="#333"),
             range=[-3, 7],
             gridcolor='rgba(0,0,0,0.05)',
             zeroline=False,
