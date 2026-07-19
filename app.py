@@ -14,19 +14,19 @@ try:
     import sascorer
 except Exception:
     sascorer = None
-from pipeline.preprocessing import (
+from rasadhi_core.preprocessing import (
     run_preprocessing_pipeline, label_activity, labels_to_targets, clean_dataset,
     check_lipinski, check_veber, check_ghose, check_egan, check_muegge,
     check_pains, check_brenk, compute_qed, analyze_scaffolds,
 )
-from pipeline.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules, batch_similarity_search, multi_reference_similarity
-from pipeline.splitting import scaffold_split, random_split, compute_split_pca
-from pipeline.clustering import cluster_butina, cluster_hierarchical, compute_cluster_pca
+from rasadhi_core.featurization import featurize_dataset, compute_descriptors, compute_fingerprint, compute_esol, find_similar_molecules, batch_similarity_search, multi_reference_similarity
+from rasadhi_core.splitting import scaffold_split, random_split, compute_split_pca
+from rasadhi_core.clustering import cluster_butina, cluster_hierarchical, compute_cluster_pca
 import altair as alt
-from pipeline.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
-from pipeline.methodology import generate_methods_text
-from pipeline.pains_catalog import get_pains_explanation, get_brenk_explanation
-from pipeline.example_data import get_fda_approved_drugs, get_pains_demo_set, get_common_analgesics
+from rasadhi_core.visualization import mol_to_base64_png, mol_to_image, plot_boiled_egg, plot_radar_chart, plot_mini_radar
+from rasadhi_core.methodology import generate_methods_text
+from rasadhi_core.pains_catalog import get_pains_explanation, get_brenk_explanation
+from rasadhi_core.example_data import get_fda_approved_drugs, get_pains_demo_set, get_common_analgesics
 from pipeline.ui_components import (
     VERSION, timestamp_filename, render_dataset_status_bar, render_empty_state,
     render_provenance_caption, render_next_step_hint, render_footer,
